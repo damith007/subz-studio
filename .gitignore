@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# App runtime files
+uploads/
+downloads/
+fonts/
+fontcache/
+fonts.conf
+NirmalaB.ttf
+*.log
+nohup.out
+
+# OS
+.DS_Store
+Thumbs.db

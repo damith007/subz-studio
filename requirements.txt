@@ -1,0 +1,9 @@
+flask
+flask-socketio
+gevent
+gevent-websocket
+gunicorn
+requests
+chardet
+psutil
+pillow
