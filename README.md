@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Subz Studio Pro
 
 A Flask/Socket.IO web app for burning Sinhala subtitles into videos using FFmpeg + libass.
@@ -53,3 +54,7 @@ subz-studio/
 ├── .gitignore
 └── README.md
 ```
+=======
+# subz-studio
+subz-studio
+>>>>>>> 38f988db5820cc3e3f0b3f4fb5a1d8bde071aae6
