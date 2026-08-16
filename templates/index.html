@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="si">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subz Studio Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        :root{
+            --bg:#090c14;--surface:#0f1520;--surface2:#161e2e;--surface3:#1c2538;
+            --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.13);
+            --accent:#3b82f6;--accent2:#6366f1;--green:#10b981;--amber:#f59e0b;--red:#ef4444;
+            --text:#e2e8f0;--muted:#64748b;
+            --mono:'JetBrains Mono',monospace;--display:'Syne',sans-serif;
+        }
+        body{font-family:var(--display);background:var(--bg);color:var(--text);min-height:100vh}
+        header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+        .logo{display:flex;align-items:center;gap:10px}
+        .logo-icon{width:30px;height:30px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800}
+        .logo-text{font-size:17px;font-weight:800;letter-spacing:-0.5px}.logo-text span{color:var(--accent)}
+        .version-badge{font-family:var(--mono);font-size:10px;background:var(--surface3);border:1px solid var(--border2);color:var(--muted);padding:3px 8px;border-radius:20px}
+
+        /* Stats bar — 4 cells */
+        .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-bottom:1px solid var(--border)}
+        .stat-cell{background:var(--surface);padding:11px 18px;display:flex;align-items:center;gap:10px}
+        .stat-icon{width:30px;height:30px;border-radius:7px;background:var(--surface2);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+        .stat-info{flex:1;min-width:0}
+        .stat-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
+        .stat-value{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--green);transition:color 0.3s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .stat-bar-wrap{width:44px;height:3px;background:var(--surface3);border-radius:2px;overflow:hidden;flex-shrink:0}
+        .stat-bar-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width 0.6s ease}
+
+        /* Auto settings chip */
+        .auto-chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);color:var(--green);padding:3px 9px;border-radius:20px}
+
+        .main{padding:22px 28px;max-width:1300px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+        .panel-header{padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+        .panel-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);display:flex;align-items:center;gap:7px}
+        .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+        .panel-body{padding:16px}
+        .full-width{grid-column:1/-1}
+
+        .input-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px}
+        textarea{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:var(--mono);font-size:12px;outline:none;resize:vertical;line-height:1.7;transition:border-color 0.2s}
+        textarea:focus{border-color:var(--accent)}
+        textarea::placeholder{color:var(--muted)}
+        input[type="file"]{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-family:var(--mono);font-size:11px;cursor:pointer;outline:none}
+        input[type="file"]::-webkit-file-upload-button{background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:4px 9px;border-radius:5px;font-family:var(--mono);font-size:10px;cursor:pointer;margin-right:7px}
+        input[type="text"],input[type="password"]{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-family:var(--mono);font-size:12px;outline:none;transition:border-color 0.2s}
+        input[type="text"]:focus,input[type="password"]:focus{border-color:var(--accent)}
+        input::placeholder{color:var(--muted)}
+
+        /* Pair preview */
+        .pair-item{display:flex;align-items:center;gap:7px;padding:5px 9px;background:var(--surface3);border-radius:6px;border:1px solid var(--border)}
+        .pair-num{font-family:var(--mono);font-size:9px;color:var(--muted);min-width:16px}
+        .pair-url{font-family:var(--mono);font-size:10px;color:var(--accent);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .pair-arrow{font-size:10px;color:var(--muted)}
+        .pair-srt{font-family:var(--mono);font-size:10px;color:var(--green);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+        .pair-warn{color:var(--red)}
+        .pair-count{font-family:var(--mono);font-size:10px;text-align:right;margin-top:5px}
+        .pair-count.ok{color:var(--green)} .pair-count.warn{color:var(--amber)} .pair-count.err{color:var(--red)}
+
+        /* Job status */
+        .job-status-list{display:none;flex-direction:column;gap:4px;margin-top:12px}
+        .job-item{display:flex;align-items:center;gap:7px;padding:6px 10px;background:var(--surface2);border-radius:7px;border:1px solid var(--border);transition:all 0.2s}
+        .job-item.active{border-color:rgba(59,130,246,0.4);background:rgba(59,130,246,0.06)}
+        .job-item.done{border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05)}
+        .job-item.error{border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05)}
+        .job-badge{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:10px;flex-shrink:0;min-width:60px;text-align:center}
+        .badge-queue{background:var(--surface3);color:var(--muted)}
+        .badge-active{background:rgba(59,130,246,0.2);color:#60a5fa}
+        .badge-done{background:rgba(16,185,129,0.2);color:var(--green)}
+        .badge-error{background:rgba(239,68,68,0.15);color:var(--red)}
+        .job-label{font-family:var(--mono);font-size:10px;color:var(--muted);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .job-meta{font-family:var(--mono);font-size:9px;color:var(--muted);white-space:nowrap}
+
+        #btn{width:100%;padding:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:10px;color:white;font-family:var(--display);font-size:13px;font-weight:700;cursor:pointer;transition:opacity 0.2s,transform 0.15s;margin-top:12px}
+        #btn:hover{opacity:0.9;transform:translateY(-1px)}
+        #btn:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+
+        .progress-wrap{display:none;margin-top:13px}
+        .progress-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px}
+        .progress-left{display:flex;flex-direction:column;gap:2px}
+        #status-text{font-family:var(--mono);font-size:11px;color:var(--accent)}
+        #bitrate-text{font-family:var(--mono);font-size:10px;color:var(--muted)}
+        .progress-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+        #pct-text{font-family:var(--mono);font-size:14px;font-weight:600}
+        #job-counter{font-family:var(--mono);font-size:10px;color:var(--muted)}
+        .progress-track{height:5px;background:var(--surface3);border-radius:3px;overflow:hidden}
+        #fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--green));width:0%;border-radius:3px;transition:width 0.4s ease}
+
+        .file-list{max-height:280px;overflow-y:auto}
+        .file-list::-webkit-scrollbar{width:3px}
+        .file-list::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:2px}
+        .file-item{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);gap:8px}
+        .file-item:last-child{border-bottom:none}
+        .file-meta{flex:1;min-width:0}
+        .file-name{font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .file-info{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:2px}
+        .file-actions{display:flex;gap:4px;flex-shrink:0;align-items:center}
+        .btn-sm{font-family:var(--mono);font-size:9px;font-weight:600;padding:3px 8px;border-radius:5px;border:none;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:3px;transition:opacity 0.15s;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap}
+        .btn-sm:hover{opacity:0.75}
+        .btn-view{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
+        .btn-prev{background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.25)}
+        .btn-tg{background:rgba(39,174,229,0.12);color:#29b6f6;border:1px solid rgba(39,174,229,0.25)}
+        .btn-del{background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.25)}
+        .btn-zip{background:rgba(99,102,241,0.12);color:#a5b4fc;border:1px solid rgba(99,102,241,0.25)}
+        .empty-state{text-align:center;padding:24px 16px}
+        .empty-icon{font-size:22px;margin-bottom:5px;opacity:0.3}
+        .empty-text{font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+        #toast{position:fixed;bottom:22px;right:22px;background:var(--surface);border:1px solid rgba(16,185,129,0.4);border-left:3px solid var(--green);color:var(--text);padding:11px 16px;border-radius:10px;font-family:var(--mono);font-size:12px;opacity:0;transform:translateY(8px);transition:all 0.3s;pointer-events:none;z-index:999;max-width:340px;line-height:1.5}
+        #toast.show{opacity:1;transform:translateY(0)}
+
+        .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:200;align-items:center;justify-content:center}
+        .modal-bg.open{display:flex}
+        .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:20px;max-width:820px;width:95%;position:relative}
+        .modal-close{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}
+        .modal-close:hover{color:var(--text)}
+        #preview-video{width:100%;border-radius:8px;background:#000;margin-top:8px;max-height:70vh}
+        .modal-title{font-family:var(--mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+        .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:8px;color:white;font-family:var(--display);font-size:12px;font-weight:700;padding:10px 18px;cursor:pointer;width:100%;transition:opacity 0.2s}
+        .btn-primary:hover{opacity:0.85}
+        .btn-primary:disabled{opacity:0.4;cursor:not-allowed}
+
+        @media(max-width:720px){.main{grid-template-columns:1fr;padding:12px}.stats-bar{grid-template-columns:repeat(2,1fr)}.input-grid{grid-template-columns:1fr!important}}
+
+        /* Encoding settings */
+        .enc-row{display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap}
+        .enc-group{display:flex;align-items:center;gap:7px}
+        .enc-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+        .preset-btn{font-family:var(--mono);font-size:10px;padding:5px 11px;border-radius:6px;border:1px solid var(--border2);background:var(--surface2);color:var(--muted);cursor:pointer;transition:all 0.15s}
+        .preset-btn:hover{border-color:var(--accent);color:var(--text)}
+        .preset-btn.active{background:rgba(59,130,246,0.15);border-color:var(--accent);color:#60a5fa;font-weight:600}
+        .crf-wrap{display:flex;align-items:center;gap:8px}
+        .crf-slider{-webkit-appearance:none;appearance:none;width:110px;height:4px;border-radius:2px;background:var(--surface3);outline:none;cursor:pointer}
+        .crf-slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--surface)}
+        .crf-val{font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:600;min-width:22px;text-align:center}
+        .enc-divider{width:1px;height:18px;background:var(--border2)}
+
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">
+        <div class="logo-icon">S</div>
+        <div class="logo-text">Subz<span>Studio</span></div>
+    </div>
+    <span class="version-badge">PRO v6.0</span>
+</header>
+
+<!-- Stats Bar -->
+<div class="stats-bar">
+    <div class="stat-cell">
+        <div class="stat-icon">⚙</div>
+        <div class="stat-info"><div class="stat-label">CPU</div><div class="stat-value" id="cpu-val">0%</div></div>
+        <div class="stat-bar-wrap"><div class="stat-bar-fill" id="cpu-bar"></div></div>
+    </div>
+    <div class="stat-cell">
+        <div class="stat-icon">◈</div>
+        <div class="stat-info"><div class="stat-label">RAM</div><div class="stat-value" id="ram-val">0%</div></div>
+        <div class="stat-bar-wrap"><div class="stat-bar-fill" id="ram-bar"></div></div>
+    </div>
+    <div class="stat-cell">
+        <div class="stat-icon">▶</div>
+        <div class="stat-info"><div class="stat-label">FFmpeg</div><div class="stat-value" id="ff-val">Idle</div></div>
+    </div>
+    <div class="stat-cell">
+        <div class="stat-icon">💾</div>
+        <div class="stat-info"><div class="stat-label">Disk Free</div><div class="stat-value" id="disk-val">—</div></div>
+    </div>
+</div>
+
+<div class="main">
+
+    <!-- Queue Panel -->
+    <div class="panel full-width">
+        <div class="panel-header">
+            <div class="panel-title"><div class="dot"></div> Processing Queue</div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <span id="queue-count" style="font-family:var(--mono);font-size:10px;color:var(--muted)">0 pairs</span>
+                <span class="auto-chip" id="auto-chip">● Auto</span>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="input-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+                <div>
+                    <label class="input-label">Video URLs — line per video</label>
+                    <textarea id="urls-input" rows="6"
+                        placeholder="https://example.com/ep1.mp4&#10;https://example.com/ep2.mp4&#10;https://example.com/ep3.mp4"
+                        oninput="updatePairPreview()"></textarea>
+                </div>
+                <div>
+                    <label class="input-label">SRT Files — same order as URLs</label>
+                    <input type="file" id="srts-input" accept=".srt" multiple onchange="updatePairPreview()">
+                    <div id="pair-preview" style="margin-top:8px;display:flex;flex-direction:column;gap:4px;max-height:130px;overflow-y:auto"></div>
+                    <div id="pair-count" class="pair-count"></div>
+                </div>
+            </div>
+
+            <!-- Job status (shown during run) -->
+            <div class="job-status-list" id="job-status-list"></div>
+            <!-- Encoding settings -->
+            <div class="enc-row">
+                <div class="enc-group">
+                    <span class="enc-label">Preset</span>
+                    <button class="preset-btn" onclick="setPreset('ultrafast')" id="p-ultrafast">ultrafast</button>
+                    <button class="preset-btn" onclick="setPreset('superfast')" id="p-superfast">superfast</button>
+                    <button class="preset-btn" onclick="setPreset('veryfast')"  id="p-veryfast">veryfast</button>
+                    <button class="preset-btn" onclick="setPreset('faster')"    id="p-faster">faster</button>
+                    <button class="preset-btn" onclick="setPreset('fast')"      id="p-fast">fast</button>
+                    <button class="preset-btn" onclick="setPreset('medium')"    id="p-medium">medium</button>
+                </div>
+                <div class="enc-divider"></div>
+                <div class="enc-group">
+                    <span class="enc-label">CRF</span>
+                    <div class="crf-wrap">
+                        <input type="range" class="crf-slider" id="crf-slider"
+                               min="0" max="51" value="18" oninput="updateCrf(this.value)">
+                        <span class="crf-val" id="crf-val">18</span>
+                    </div>
+                    <span style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="crf-hint">high quality</span>
+                </div>
+            </div>
+            <button id="btn" onclick="startAll()">Start Queue →</button>
+
+            <div class="progress-wrap" id="progress-wrap">
+                <div class="progress-top">
+                    <div class="progress-left">
+                        <span id="status-text">සූදානම් වෙමින්...</span>
+                        <span id="bitrate-text"></span>
+                    </div>
+                    <div class="progress-right">
+                        <span id="pct-text">0%</span>
+                        <span id="job-counter"></span>
+                    </div>
+                </div>
+                <div class="progress-track"><div id="fill"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Info Panel -->
+    <div class="panel full-width" id="file-info-panel" style="display:none">
+        <div class="panel-header">
+            <div class="panel-title"><div class="dot" style="background:var(--accent2)"></div> Temp Files</div>
+            <span id="file-info-job" style="font-family:var(--mono);font-size:10px;color:var(--muted)"></span>
+        </div>
+        <div class="panel-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div id="raw-info" style="background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:12px">
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">raw.mp4</div>
+                <div id="raw-details" style="font-family:var(--mono);font-size:11px;color:var(--muted)">Waiting...</div>
+                <div style="margin-top:6px;height:3px;background:var(--surface3);border-radius:2px;overflow:hidden"><div id="raw-bar" style="height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width 0.4s"></div></div>
+            </div>
+            <div id="sub-info" style="background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:12px">
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">subtitles.ass</div>
+                <div id="sub-details" style="font-family:var(--mono);font-size:11px;color:var(--muted)">Waiting...</div>
+                <div style="margin-top:6px;height:3px;background:var(--surface3);border-radius:2px;overflow:hidden"><div id="sub-bar" style="height:100%;width:0%;background:var(--green);border-radius:2px;transition:width 0.4s"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Downloads -->
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><div class="dot" style="background:var(--green)"></div> Downloads</div>
+            <div style="display:flex;align-items:center;gap:7px">
+                <span id="dl-count" style="font-family:var(--mono);font-size:10px;color:var(--muted)">0 files</span>
+                <button onclick="toggleSelectAll()" id="sel-all-btn" class="btn-sm" style="display:none;background:rgba(99,102,241,0.12);color:#a5b4fc;border:1px solid rgba(99,102,241,0.25)">☑ All</button>
+                <button onclick="downloadZip()" id="zip-btn" class="btn-sm btn-zip" style="display:none">⬇ ZIP</button>
+                <button onclick="deleteAll('downloads')" class="btn-sm btn-del">✕ All</button>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="file-list" id="dl-list">
+                <div class="empty-state"><div class="empty-icon">📁</div><div class="empty-text">ගොනු කිසිවක් නැත</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Uploads -->
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><div class="dot" style="background:var(--amber)"></div> Uploads</div>
+            <div style="display:flex;align-items:center;gap:7px">
+                <span id="up-count" style="font-family:var(--mono);font-size:10px;color:var(--muted)">0 files</span>
+                <button onclick="cleanupTmp()" class="btn-sm btn-del">Clean Temp</button>
+                <button onclick="deleteAll('uploads')" class="btn-sm btn-del">✕ All</button>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="file-list" id="up-list">
+                <div class="empty-state"><div class="empty-icon">📂</div><div class="empty-text">ගොනු කිසිවක් නැත</div></div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Preview Modal -->
+<div class="modal-bg" id="preview-modal" onclick="if(event.target===this)closePreview()">
+    <div class="modal">
+        <button class="modal-close" onclick="closePreview()">✕</button>
+        <div class="modal-title" id="preview-title">Preview</div>
+        <video id="preview-video" controls></video>
+    </div>
+</div>
+
+<!-- Telegram Modal -->
+<div class="modal-bg" id="tg-modal" onclick="if(event.target===this)closeTg()">
+    <div class="modal arch-modal">
+        <button class="modal-close" onclick="closeTg()">✕</button>
+        <div class="modal-title">✈ Telegram Upload</div>
+
+        <!-- Server status bar -->
+        <div id="tg-server-bar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:8px 11px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px">
+            <div style="display:flex;align-items:center;gap:8px">
+                <span id="tg-server-dot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;flex-shrink:0"></span>
+                <span id="tg-server-txt" style="font-family:var(--mono);font-size:10px;color:var(--muted)">Server status unknown</span>
+            </div>
+            <div style="display:flex;gap:6px">
+                <button onclick="checkTgServer()" class="btn-sm" style="background:rgba(39,174,229,0.12);color:#29b6f6;border:1px solid rgba(39,174,229,0.25)">Check</button>
+                <button onclick="startTgServer()" id="tg-start-btn" class="btn-sm" style="background:rgba(16,185,129,0.12);color:var(--green);border:1px solid rgba(16,185,129,0.25)">Start Server</button>
+            </div>
+        </div>
+
+        <div class="arch-field">
+            <label class="input-label" style="display:block;margin-bottom:4px">Bot Token</label>
+            <input type="text" id="tg-token" placeholder="123456789:ABCdef..." autocomplete="off" spellcheck="false">
+        </div>
+        <div class="arch-field">
+            <label class="input-label" style="display:block;margin-bottom:4px">Chat ID / Channel ID</label>
+            <input type="text" id="tg-chat" placeholder="-100xxxxxxxxxx or @channelname">
+        </div>
+        <div class="arch-field">
+            <label class="input-label" style="display:block;margin-bottom:4px">Caption (optional)</label>
+            <input type="text" id="tg-caption" placeholder="Video caption...">
+        </div>
+
+        <!-- API toggle -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+            <label class="input-label" style="margin:0">Mode</label>
+            <div style="display:flex;gap:0;border:1px solid var(--border2);border-radius:6px;overflow:hidden">
+                <button id="tg-local-btn" onclick="setTgMode(true)"
+                    style="font-family:var(--mono);font-size:10px;padding:5px 12px;border:none;cursor:pointer;background:rgba(39,174,229,0.2);color:#29b6f6;font-weight:600;border-right:1px solid var(--border2)">
+                    Local · 2GB
+                </button>
+                <button id="tg-official-btn" onclick="setTgMode(false)"
+                    style="font-family:var(--mono);font-size:10px;padding:5px 12px;border:none;cursor:pointer;background:var(--surface2);color:var(--muted)">
+                    Official · 50MB
+                </button>
+            </div>
+            <span style="font-family:var(--mono);font-size:9px;color:var(--muted)" id="tg-api-hint">localhost:8081</span>
+        </div>
+
+        <button class="btn-primary" id="tg-btn" onclick="doTgUpload()"
+            style="background:linear-gradient(135deg,#1565c0,#29b6f6)">
+            ✈ Upload to Telegram →
+        </button>
+
+        <div id="tg-progress-wrap" style="display:none;margin-top:10px">
+            <div style="height:4px;background:var(--surface3);border-radius:2px;overflow:hidden">
+                <div id="tg-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#1565c0,#29b6f6);border-radius:2px;transition:width 0.3s"></div>
+            </div>
+        </div>
+        <div id="tg-status" style="font-family:var(--mono);font-size:11px;color:#29b6f6;margin-top:9px;min-height:16px"></div>
+        <div id="tg-link"   style="font-family:var(--mono);font-size:11px;color:var(--green);word-break:break-all;margin-top:5px"></div>
+
+        <details style="margin-top:13px">
+            <summary style="font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer">▸ Setup guide</summary>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.9;margin-top:7px;background:var(--surface3);padding:10px;border-radius:7px">
+                <b style="color:var(--text)">One-time VPS setup:</b><br>
+                1. <code style="color:#86efac">apt-get install telegram-bot-api</code><br>
+                2. "Start Server" button click කරන්න — auto start වෙනවා<br>
+                3. Bot token + Chat ID දෙන්න → Upload!<br><br>
+                <b style="color:var(--text)">Chat ID find:</b><br>
+                Channel: Settings → Copy link → ID is the number<br>
+                Bot: <a href="https://t.me/username_to_id_bot" target="_blank" style="color:var(--accent)">@username_to_id_bot</a><br><br>
+                <b style="color:var(--text)">Your App credentials (pre-configured):</b><br>
+                API ID: <code style="color:#86efac">36668698</code> · Port: <code style="color:#86efac">8081</code>
+            </div>
+        </details>
+    </div>
+</div>
+
+
+<div id="toast"></div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    const socket = io();
+    let archiveFilename = '';
+
+    // ── Stats ─────────────────────────────────────────────────────────────────
+    socket.on('sys_usage', d => {
+        document.getElementById('cpu-val').innerText = d.cpu + '%';
+        document.getElementById('ram-val').innerText = d.ram + '%';
+        document.getElementById('disk-val').innerText = d.disk + ' GB';
+        document.getElementById('cpu-bar').style.width  = Math.min(d.cpu,100) + '%';
+        document.getElementById('ram-bar').style.width  = Math.min(d.ram,100) + '%';
+        document.getElementById('cpu-bar').style.background = d.cpu > 80 ? 'var(--red)' : 'var(--accent)';
+        document.getElementById('ram-bar').style.background = d.ram > 80 ? 'var(--red)' : 'var(--accent)';
+        const ff = document.getElementById('ff-val');
+        ff.innerText = d.ffmpeg;
+        ff.style.color = d.ffmpeg === 'Running' ? 'var(--amber)' : 'var(--green)';
+    });
+
+    // ── Pair preview ──────────────────────────────────────────────────────────
+    function getUrls() {
+        return document.getElementById('urls-input').value
+            .split('\n').map(u=>u.trim()).filter(u=>u.length>0);
+    }
+    function getSrts() {
+        return Array.from(document.getElementById('srts-input').files);
+    }
+    function updatePairPreview() {
+        const urls = getUrls(), srts = getSrts();
+        const n = Math.min(urls.length, srts.length);
+        document.getElementById('queue-count').innerText = n + ' pairs';
+        const preview = document.getElementById('pair-preview');
+        preview.innerHTML = urls.map((url,i) => {
+            const srt = srts[i];
+            const un  = url.split('/').pop().split('?')[0].slice(0,35) || url.slice(0,35);
+            const sn  = srt ? srt.name : '<span class="pair-warn">SRT නැත!</span>';
+            return `<div class="pair-item">
+                <span class="pair-num">#${i+1}</span>
+                <span class="pair-url" title="${url}">${un}</span>
+                <span class="pair-arrow">→</span>
+                <span class="pair-srt">${sn}</span>
+            </div>`;
+        }).join('');
+        const cnt = document.getElementById('pair-count');
+        const diff = urls.length - srts.length;
+        if (diff === 0 && urls.length > 0) {
+            cnt.className='pair-count ok'; cnt.innerText=`✓ ${urls.length} pairs ready`;
+        } else if (diff > 0) {
+            cnt.className='pair-count warn'; cnt.innerText=`⚠ ${diff} URL${diff>1?'s':''} without SRT`;
+        } else if (diff < 0) {
+            cnt.className='pair-count warn'; cnt.innerText=`⚠ ${Math.abs(diff)} extra SRT${Math.abs(diff)>1?'s':''}`;
+        } else {
+            cnt.className='pair-count'; cnt.innerText='';
+        }
+    }
+
+    // ── Job status list ───────────────────────────────────────────────────────
+    function buildJobList(jobs) {
+        const list = document.getElementById('job-status-list');
+        list.style.display='flex';
+        list.innerHTML = jobs.map((j,i) => {
+            const lbl = j.url.split('/').pop().split('?')[0].slice(0,50)||j.url.slice(0,50);
+            return `<div class="job-item" id="ji-${i+1}">
+                <span class="job-badge badge-queue" id="jb-${i+1}">Queued</span>
+                <span class="job-label">#${i+1} ${lbl}</span>
+                <span class="job-meta" id="jm-${i+1}"></span>
+            </div>`;
+        }).join('');
+    }
+    function setJobState(n, state, meta) {
+        const row   = document.getElementById('ji-'+n);
+        const badge = document.getElementById('jb-'+n);
+        const meta_el = document.getElementById('jm-'+n);
+        if (!row||!badge) return;
+        row.className   = 'job-item '+state;
+        badge.className = 'job-badge badge-'+state;
+        badge.innerText = {active:'Processing',done:'✓ Done',error:'✕ Failed',queue:'Queued'}[state]||state;
+        if (meta && meta_el) meta_el.innerText = meta;
+    }
+
+    // ── Start ─────────────────────────────────────────────────────────────────
+    async function startAll() {
+        const urls = getUrls(), srts = getSrts();
+        if (!urls.length)   { showToast('URLs ලබාදෙන්න!', true); return; }
+        if (!srts.length)   { showToast('SRT files select කරන්න!', true); return; }
+        if (urls.length !== srts.length) {
+            showToast(`URLs ${urls.length} · SRTs ${srts.length} — ගණන ගැලපෙන්නේ නැත!`, true); return;
+        }
+        document.getElementById('btn').disabled = true;
+        document.getElementById('progress-wrap').style.display = 'block';
+        setProgress('SRTs upload කරමින්...', 0, '');
+
+        const fd = new FormData();
+        srts.forEach(f => fd.append('files[]', f));
+        const res    = await fetch('/upload-srt', {method:'POST',body:fd});
+        const upData = await res.json();
+
+        const jobs = urls.map((url,i) => ({url, srt_name: upData.filenames[i]}));
+        buildJobList(jobs);
+        socket.emit('start_automation', {jobs, preset: currentPreset, crf: currentCrf});
+        refreshLists();
+    }
+
+    // ── Socket events ─────────────────────────────────────────────────────────
+    socket.on('queue_start', d => {
+        document.getElementById('job-counter').innerText = '0 / '+d.total+' jobs';
+        document.getElementById('auto-chip').innerText =
+            `● ${d.preset} · CRF${d.crf} · ${d.threads}T`;
+    });
+    socket.on('progress', d => {
+        setProgress(d.task+'...', d.percentage, d.bitrate||'');
+        if (d.job) {
+            setJobState(d.job, 'active');
+            document.getElementById('job-counter').innerText = d.job+' / '+d.total+' jobs';
+        }
+    });
+    socket.on('status', d => {
+        setProgress(d.msg, parseFloat(document.getElementById('fill').style.width)||0, '');
+    });
+    socket.on('job_done', d => {
+        setJobState(d.job, 'done', `${d.size}MB · ${d.resolution} · ${d.duration}s`);
+        showToast(`✓ ${d.filename}\n${d.size} MB · ${d.resolution}`);
+        refreshLists();
+    });
+    // ── File info events ──────────────────────────────────────────────────────
+    socket.on('file_info', d => {
+        const panel = document.getElementById('file-info-panel');
+        panel.style.display = 'block';
+        document.getElementById('file-info-job').innerText = 'Job ' + d.job;
+        if (d.file === 'raw.mp4') {
+            document.getElementById('raw-details').innerText = d.details;
+            document.getElementById('raw-details').style.color = 'var(--accent)';
+            document.getElementById('raw-bar').style.width = '100%';
+        } else if (d.file === 'subtitles.mkv') {
+            document.getElementById('sub-details').innerText = d.details;
+            document.getElementById('sub-details').style.color = 'var(--green)';
+            document.getElementById('sub-bar').style.width = '100%';
+        }
+    });
+
+    socket.on('finished', d => {
+        document.getElementById('btn').disabled = false;
+        // Reset file info panel for next run
+        setTimeout(() => {
+            document.getElementById('file-info-panel').style.display = 'none';
+            document.getElementById('raw-details').innerText  = 'Waiting...';
+            document.getElementById('sub-details').innerText  = 'Waiting...';
+            document.getElementById('raw-details').style.color = 'var(--muted)';
+            document.getElementById('sub-details').style.color = 'var(--muted)';
+            document.getElementById('raw-bar').style.width = '0%';
+            document.getElementById('sub-bar').style.width = '0%';
+        }, 8000);
+        const msg = `Queue නිම ✓ ${d.completed} ok${d.failed?' · ✕ '+d.failed+' failed':''}`;
+        setProgress(msg, 100, '');
+        showToast(msg);
+        refreshLists();
+        setTimeout(()=>{ document.getElementById('progress-wrap').style.display='none'; }, 6000);
+    });
+
+    function setProgress(msg, pct, bitrate) {
+        document.getElementById('status-text').innerText = msg;
+        document.getElementById('pct-text').innerText    = Math.round(pct)+'%';
+        document.getElementById('fill').style.width      = pct+'%';
+        document.getElementById('bitrate-text').innerText= bitrate||'';
+    }
+
+    // ── File lists ────────────────────────────────────────────────────────────
+    function renderFiles(type, data) {
+        const listEl  = document.getElementById(type==='downloads'?'dl-list':'up-list');
+        const countEl = document.getElementById(type==='downloads'?'dl-count':'up-count');
+        countEl.innerText = data.length+' file'+(data.length!==1?'s':'');
+        const hasDl = type==='downloads' && data.length>0;
+        if (type==='downloads') {
+            document.getElementById('zip-btn').style.display   = hasDl?'inline-flex':'none';
+            document.getElementById('sel-all-btn').style.display = hasDl?'inline-flex':'none';
+        }
+        if (!data.length) {
+            listEl.innerHTML=`<div class="empty-state"><div class="empty-icon">${type==='downloads'?'📁':'📂'}</div><div class="empty-text">ගොනු කිසිවක් නැත</div></div>`;
+            return;
+        }
+        listEl.innerHTML = data.map(f => {
+            let actions = `<button class="btn-sm btn-del" onclick="deleteFile('${type}','${f.name}')">✕</button>`;
+            if (type==='downloads') {
+                actions = `<input type="checkbox" class="dl-check" value="${f.name}" onchange="updateZipBtn()" style="accent-color:var(--accent);width:13px;height:13px;cursor:pointer;flex-shrink:0">
+                           <button class="btn-sm btn-prev" onclick="openPreview('${f.name}')">▶</button>
+                           <a href="/download/${f.name}" target="_blank" class="btn-sm btn-view">↓</a>
+                           <button class="btn-sm btn-arch" onclick="openArch('${f.name}')">☁</button>`+actions;
+            }
+            return `<div class="file-item">
+                <div class="file-meta">
+                    <div class="file-name">${f.name}</div>
+                    <div class="file-info">${f.size} MB</div>
+                </div>
+                <div class="file-actions">${actions}</div>
+            </div>`;
+        }).join('');
+    }
+    function refreshLists() {
+        ['downloads','uploads'].forEach(type=>{
+            fetch('/get-files/'+type).then(r=>r.json()).then(d=>renderFiles(type,d));
+        });
+    }
+
+    // ── ZIP ───────────────────────────────────────────────────────────────────
+    function updateZipBtn() {
+        const n = document.querySelectorAll('.dl-check:checked').length;
+        document.getElementById('zip-btn').innerText = n>0?`⬇ ZIP (${n})`:'⬇ ZIP';
+    }
+    function toggleSelectAll() {
+        const checks = document.querySelectorAll('.dl-check');
+        const all = Array.from(checks).every(c=>c.checked);
+        checks.forEach(c=>c.checked=!all);
+        document.getElementById('sel-all-btn').innerText = all?'☑ All':'☐ All';
+        updateZipBtn();
+    }
+    function downloadZip() {
+        let files = Array.from(document.querySelectorAll('.dl-check:checked')).map(c=>c.value);
+        if (!files.length) files = Array.from(document.querySelectorAll('.dl-check')).map(c=>c.value);
+        if (!files.length) { showToast('ගොනු නැත!', true); return; }
+        showToast('ZIP සාදමින්... ('+files.length+' files)');
+        fetch('/download-zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filenames:files})})
+            .then(r=>r.ok?r.blob():Promise.reject())
+            .then(blob=>{
+                const a=document.createElement('a');
+                a.href=URL.createObjectURL(blob);
+                a.download='subz_'+Date.now()+'.zip';
+                a.click();
+            }).catch(()=>showToast('ZIP failed!',true));
+    }
+
+    // ── Preview ───────────────────────────────────────────────────────────────
+    function openPreview(name) {
+        document.getElementById('preview-title').innerText = name;
+        document.getElementById('preview-video').src = '/download/'+name;
+        document.getElementById('preview-modal').classList.add('open');
+    }
+    function closePreview() {
+        document.getElementById('preview-modal').classList.remove('open');
+        document.getElementById('preview-video').pause();
+        document.getElementById('preview-video').src='';
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function deleteFile(type,name) {
+        if(confirm('ස්ථිරවම මකා දැමීමට?'))
+            fetch('/delete-file/'+type+'/'+name,{method:'POST'}).then(refreshLists);
+    }
+    function deleteAll(type) {
+        const label = type === 'downloads' ? 'Downloads' : 'Uploads';
+        if(confirm(label + ' folder එකේ සියලු ගොනු delete කරන්නද?'))
+            fetch('/delete-all/'+type,{method:'POST'}).then(r=>r.json())
+                .then(d=>{showToast(label+': '+d.removed+' ගොනු deleted!');refreshLists();});
+    }
+    function cleanupTmp() {
+        fetch('/cleanup-tmp',{method:'POST'}).then(r=>r.json())
+            .then(d=>{showToast('Temp '+d.removed+'ක් deleted!');refreshLists();});
+    }
+    function showToast(msg,isError=false) {
+        const t=document.getElementById('toast');
+        t.innerText=msg;
+        t.style.borderLeftColor=isError?'var(--red)':'var(--green)';
+        t.style.borderColor=isError?'rgba(239,68,68,0.4)':'rgba(16,185,129,0.4)';
+        t.classList.add('show');
+        setTimeout(()=>t.classList.remove('show'),4000);
+    }
+
+    // ── Encoding settings ────────────────────────────────────────────────────
+    let currentPreset = 'superfast';
+    let currentCrf    = 18;
+
+    function setPreset(p) {
+        currentPreset = p;
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        const el = document.getElementById('p-' + p);
+        if (el) el.classList.add('active');
+    }
+
+    function updateCrf(v) {
+        currentCrf = parseInt(v);
+        document.getElementById('crf-val').innerText = v;
+        const hints = {
+            0:'lossless', 5:'near lossless', 10:'visually lossless',
+            18:'high quality', 23:'default', 28:'good quality',
+            35:'lower quality', 42:'low quality', 51:'worst'
+        };
+        // Find closest hint
+        const keys = Object.keys(hints).map(Number).sort((a,b)=>a-b);
+        let closest = keys[0];
+        for (const k of keys) { if (Math.abs(k - currentCrf) <= Math.abs(closest - currentCrf)) closest = k; }
+        document.getElementById('crf-hint').innerText = hints[closest];
+    }
+
+    // Set default active state
+    setPreset('superfast');
+    updateCrf(18);
+
+    // ── Telegram ──────────────────────────────────────────────────────────────
+    let tgFilename = '';
+    let tgUseLocal = true;
+
+    function setServerStatus(running, msg) {
+        const dot = document.getElementById('tg-server-dot');
+        const txt = document.getElementById('tg-server-txt');
+        const btn = document.getElementById('tg-start-btn');
+        dot.style.background = running === true  ? 'var(--green)' :
+                               running === false ? 'var(--red)'   : 'var(--muted)';
+        txt.innerText = msg;
+        txt.style.color = running === true ? 'var(--green)' : running === false ? 'var(--red)' : 'var(--muted)';
+        btn.style.display = running === true ? 'none' : 'inline-flex';
+    }
+
+    function checkTgServer() {
+        const token = document.getElementById('tg-token').value.trim();
+        if (!token) { setServerStatus(null, 'Bot token ලබාදෙන්න'); return; }
+        setServerStatus(null, 'Checking...');
+        fetch('/check-tg-server', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({bot_token: token})})
+            .then(r => r.json())
+            .then(d => setServerStatus(d.running, d.msg));
+    }
+
+    function startTgServer() {
+        const token = document.getElementById('tg-token').value.trim();
+        if (!token) { setServerStatus(null, 'Bot token ලබාදෙන්න'); return; }
+        setServerStatus(null, 'Starting local server...');
+        document.getElementById('tg-start-btn').disabled = true;
+        fetch('/start-tg-server', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({bot_token: token})})
+            .then(r => r.json())
+            .then(d => {
+                document.getElementById('tg-start-btn').disabled = false;
+                setServerStatus(d.status === 'started' || d.status === 'already_running', d.msg);
+            });
+    }
+
+    function setTgMode(local) {
+        tgUseLocal = local;
+        const lb = document.getElementById('tg-local-btn');
+        const ob = document.getElementById('tg-official-btn');
+        const hint = document.getElementById('tg-api-hint');
+        const serverBar = document.getElementById('tg-server-bar');
+        if (local) {
+            lb.style.background='rgba(39,174,229,0.2)'; lb.style.color='#29b6f6'; lb.style.fontWeight='600';
+            ob.style.background='var(--surface2)';       ob.style.color='var(--muted)'; ob.style.fontWeight='400';
+            hint.innerText='localhost:8081 · up to 2GB';
+            serverBar.style.display='flex';
+        } else {
+            ob.style.background='rgba(39,174,229,0.2)'; ob.style.color='#29b6f6'; ob.style.fontWeight='600';
+            lb.style.background='var(--surface2)';       lb.style.color='var(--muted)'; lb.style.fontWeight='400';
+            hint.innerText='api.telegram.org · max 50MB';
+            serverBar.style.display='none';
+        }
+    }
+
+    function openTg(name) {
+        tgFilename = name;
+        document.getElementById('tg-caption').value  = name.replace('.mp4','');
+        document.getElementById('tg-status').innerText = '';
+        document.getElementById('tg-link').innerText   = '';
+        document.getElementById('tg-btn').disabled     = false;
+        document.getElementById('tg-progress-wrap').style.display = 'none';
+        document.getElementById('tg-bar').style.width  = '0%';
+        document.getElementById('tg-modal').classList.add('open');
+        // Auto-check server status when modal opens
+        setTimeout(() => {
+            const token = document.getElementById('tg-token').value.trim();
+            if (token && tgUseLocal) checkTgServer();
+        }, 300);
+    }
+
+    function closeTg() {
+        document.getElementById('tg-modal').classList.remove('open');
+    }
+
+    function doTgUpload() {
+        const token   = document.getElementById('tg-token').value.trim();
+        const chat    = document.getElementById('tg-chat').value.trim();
+        const caption = document.getElementById('tg-caption').value.trim();
+        if (!token || !chat) {
+            document.getElementById('tg-status').innerText = 'Bot Token සහ Chat ID ලබාදෙන්න!';
+            return;
+        }
+        document.getElementById('tg-btn').disabled = true;
+        document.getElementById('tg-status').innerText = 'ආරම්භ කරමින්...';
+        document.getElementById('tg-progress-wrap').style.display = 'block';
+        fetch('/upload-to-telegram', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({filename:tgFilename, bot_token:token,
+                                  chat_id:chat, caption, use_local:tgUseLocal})
+        });
+    }
+
+    socket.on('tg_status', d => {
+        document.getElementById('tg-status').innerText  = d.msg;
+        document.getElementById('tg-status').style.color = d.error ? 'var(--red)' : '#29b6f6';
+        if (d.pct !== undefined) document.getElementById('tg-bar').style.width = d.pct + '%';
+    });
+    socket.on('tg_done', d => {
+        document.getElementById('tg-status').innerText   = d.msg;
+        document.getElementById('tg-status').style.color = 'var(--green)';
+        document.getElementById('tg-bar').style.width    = '100%';
+        document.getElementById('tg-btn').disabled       = false;
+        if (d.url)
+            document.getElementById('tg-link').innerHTML =
+                `<a href="${d.url}" target="_blank" style="color:var(--green)">${d.url}</a>`;
+        showToast('✓ Telegram upload සාර්ථකයි!');
+    });
+
+
+    refreshLists();
+    setInterval(refreshLists,10000);
+</script>
+</body>
+</html>
