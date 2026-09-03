@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtualenv
+venv/
+env/
+
+# Runtime data (mounted as volumes)
+uploads/
+downloads/
+fontcache/
+fonts/
+NirmalaB.ttf
+*.session
+*.log
+tg-data/
+
+# Git
+.git/
+.gitignore
+
+# Docker files (don't nest)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# SSL certs
+ssl/
