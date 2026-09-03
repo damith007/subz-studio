@@ -1,60 +1,47 @@
-<<<<<<< HEAD
-# Subz Studio Pro
 
-A Flask/Socket.IO web app for burning Sinhala subtitles into videos using FFmpeg + libass.
+## Docker Setup (Recommended)
 
-## Features
-- Multi-URL + multi-SRT queue processing
-- ASS/libass subtitle burn-in with Nirmala UI font (Sinhala, Tamil, Latin)
-- Watermark (Subz.LK) top-left
-- Promo text at intro, midpoint, and outro
-- Archive.org upload with S3 API
-- ZIP download of multiple files
-- Live progress: download %, encoding bitrate, fps, speed
-- Auto audio conversion (MP3/AC3 → AAC)
-- Configurable preset and CRF from UI
-
-## Requirements
-- Python 3.10+
-- FFmpeg with libass (`apt-get install ffmpeg`)
-- fontconfig (`apt-get install fontconfig`)
-
-## Setup
-
+### Quick start
 ```bash
-# 1. Clone
-git clone https://github.com/youruser/subz-studio.git
-cd subz-studio
-
-# 2. Create virtualenv
-python3 -m venv venv
-source venv/bin/activate
-
-# 3. Install Python deps
-pip install -r requirements.txt
-
-# 4. Run
-python app.py
-# or with gunicorn (recommended):
-nohup gunicorn --worker-class gevent -w 1 --timeout 1800 --bind 0.0.0.0:5000 app:app > app.log 2>&1 &
+chmod +x docker-start.sh
+./docker-start.sh
 ```
 
-## Notes
-- `NirmalaB.ttf` is auto-downloaded on first run from a public CDN
-- `fonts/`, `uploads/`, `downloads/` folders are created automatically
-- Archive.org upload requires S3 API keys from https://archive.org/account/s3.php
+### Manual
+```bash
+# Build and start app + Telegram server
+docker compose up -d
 
-## Folder structure
+# App only (no Telegram)
+docker compose up -d subz-studio
+
+# With Nginx reverse proxy
+docker compose --profile nginx up -d
+
+# View logs
+docker compose logs -f subz-studio
+
+# Stop everything
+docker compose down
 ```
-subz-studio/
-├── app.py              # Flask app + all processing logic
-├── templates/
-│   └── index.html      # Frontend UI
-├── requirements.txt
-├── .gitignore
-└── README.md
+
+### Services
+| Service | Port | Description |
+|---|---|---|
+| subz-studio | 5000 | Main Flask app |
+| tg-server | 8081 | Telegram Local Bot API (2GB uploads) |
+| nginx | 80/443 | Reverse proxy (optional, --profile nginx) |
+
+### Volumes (persisted)
+- `./uploads/` — temp processing files
+- `./downloads/` — encoded output videos
+- `./fontcache/` — fontconfig cache
+- `./tg-data/` — Telegram server data
+
+### Environment variables
+Edit `docker-compose.yml` or create a `.env` file:
+```env
+TG_API_ID=36668698
+TG_API_HASH=5e1172b296563abf8ba9939c557c9f66
+TG_PORT=8081
 ```
-=======
-# subz-studio
-subz-studio
->>>>>>> 38f988db5820cc3e3f0b3f4fb5a1d8bde071aae6
