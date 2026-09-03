@@ -1,0 +1,80 @@
+version: '3.9'
+
+services:
+
+  # ── Subz Studio App ─────────────────────────────────────────────────────────
+  subz-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: subz-studio
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persist uploads and downloads across restarts
+      - ./uploads:/app/uploads
+      - ./downloads:/app/downloads
+      # Font cache — avoids rebuilding on every start
+      - ./fontcache:/app/fontcache
+      # Telegram bot API log (if using local server)
+      - ./tgapi.log:/app/tgapi.log
+    environment:
+      # Telegram App credentials (from my.telegram.org/apps)
+      - TG_API_ID=36668698
+      - TG_API_HASH=5e1172b296563abf8ba9939c557c9f66
+      - TG_PORT=8081
+      # Override encoding defaults if needed
+      # - PRESET=superfast
+      # - CRF=18
+    networks:
+      - subz-net
+    depends_on:
+      - tg-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Telegram Local Bot API Server ───────────────────────────────────────────
+  # Handles file uploads up to 2GB
+  # Remove this service if you don't need Telegram upload
+  tg-server:
+    image: aiogram/telegram-bot-api:latest
+    container_name: subz-tg-api
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./tg-data:/var/lib/telegram-bot-api
+    environment:
+      - TELEGRAM_API_ID=36668698
+      - TELEGRAM_API_HASH=5e1172b296563abf8ba9939c557c9f66
+      - TELEGRAM_LOCAL=1
+      - TELEGRAM_PORT=8081
+    networks:
+      - subz-net
+
+  # ── Nginx reverse proxy (optional — comment out if not needed) ──────────────
+  nginx:
+    image: nginx:alpine
+    container_name: subz-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro          # mount your SSL certs here
+    networks:
+      - subz-net
+    depends_on:
+      - subz-studio
+    profiles:
+      - nginx    # only starts with: docker compose --profile nginx up
+
+networks:
+  subz-net:
+    driver: bridge
