@@ -498,190 +498,309 @@ def download_zip():
         headers={'Content-Disposition':
                  f'attachment; filename=subz_{uuid.uuid4().hex[:8]}.zip'})
 
-@app.route('/upload-to-archive', methods=['POST'])
-def upload_to_archive():
+
+
+@app.route('/upload-to-pixeldrain', methods=['POST'])
+def upload_to_pixeldrain():
+    """
+    Upload file to Pixeldrain.com — free file hosting, direct download links.
+    API docs: https://pixeldrain.com/api
+    Anonymous upload: free, files kept for 60 days, max 20GB per file.
+    With API key: longer retention.
+    """
     data      = request.get_json()
     filename  = data.get('filename', '')
-    ia_user   = data.get('ia_user', '').strip()
-    ia_pass   = data.get('ia_pass', '').strip()
-    title     = data.get('title', filename)
+    api_key   = data.get('api_key', '').strip()   # optional — empty = anonymous
     file_path = os.path.join(FINAL_FOLDER, filename)
+
     if not os.path.exists(file_path):
         return jsonify({'status': 'error', 'msg': 'File not found'}), 404
-    if not ia_user or not ia_pass:
-        return jsonify({'status': 'error', 'msg': 'S3 Keys ලබාදෙන්න'}), 400
 
     def do_upload():
         try:
-            identifier = 'subz-' + uuid.uuid4().hex
-            socketio.emit('archive_status', {'msg': 'Archive.org upload ආරම්භ...'})
-            file_size = os.path.getsize(file_path)
-            from requests.adapters import HTTPAdapter
-            from urllib3.util.retry import Retry
-            session = requests.Session()
-            session.mount('https://', HTTPAdapter(
-                max_retries=Retry(total=3, backoff_factor=2,
-                                  status_forcelist=[500,502,503,504])))
-            headers = {
-                'x-archive-meta-title':       title,
-                'x-archive-meta-mediatype':   'movies',
-                'x-archive-auto-make-bucket': '1',
-                'Content-Type':               'video/mp4',
-                'Content-Length':             str(file_size),
-                'Authorization':              'LOW ' + ia_user + ':' + ia_pass,
-            }
-            class PF:
-                def __init__(self, p, t): self._f=open(p,'rb'); self._t=t; self._d=0
-                def read(self, sz=-1):
-                    c = self._f.read(sz)
-                    if c:
-                        self._d += len(c)
-                        pct = round(self._d/self._t*100, 1)
-                        socketio.emit('archive_status', {
-                            'msg': f'Uploading {pct}% · '
-                                   f'{round(self._d/1024/1024,1)}/'
-                                   f'{round(self._t/1024/1024,1)} MB',
-                            'pct': pct})
-                    return c
-                def __len__(self): return self._t
+            file_size    = os.path.getsize(file_path)
+            file_size_mb = round(file_size / 1024 / 1024, 1)
+            socketio.emit('pd_status', {
+                'msg': f'Pixeldrain upload starting... {file_size_mb} MB',
+                'pct': 0
+            })
+
+            class ProgressFile:
+                def __init__(self, path, total):
+                    self._f     = open(path, 'rb')
+                    self._total = total
+                    self._done  = 0
+                    self._last  = 0
+                def read(self, size=-1):
+                    chunk = self._f.read(size)
+                    if chunk:
+                        self._done += len(chunk)
+                        pct = round(self._done / self._total * 100, 1)
+                        if pct - self._last >= 1:
+                            self._last = pct
+                            done_mb  = round(self._done  / 1024/1024, 1)
+                            total_mb = round(self._total / 1024/1024, 1)
+                            socketio.emit('pd_status', {
+                                'msg': f'Uploading {pct}% - {done_mb}/{total_mb} MB',
+                                'pct': pct
+                            })
+                    return chunk
+                def __len__(self): return self._total
                 def close(self): self._f.close()
-            pf = PF(file_path, file_size)
+
+            pf = ProgressFile(file_path, file_size)
+
+            auth = ('', api_key) if api_key else None
+
             try:
-                resp = session.put(
-                    f'https://s3.us.archive.org/{identifier}/{filename}',
-                    data=pf, headers=headers, timeout=3600)
+                resp = requests.post(
+                    'https://pixeldrain.com/api/file',
+                    auth=auth,
+                    files={'file': (filename, pf, 'video/mp4')},
+                    params={'name': filename},
+                    timeout=7200
+                )
             finally:
                 pf.close()
-            if resp.status_code in (200, 201):
-                socketio.emit('archive_done', {
-                    'url': f'https://archive.org/details/{identifier}',
-                    'identifier': identifier})
+
+            result = resp.json()
+            if resp.status_code in (200, 201) and result.get('id'):
+                file_id  = result['id']
+                dl_url   = f'https://pixeldrain.com/u/{file_id}'
+                api_url  = f'https://pixeldrain.com/api/file/{file_id}'
+                socketio.emit('pd_done', {
+                    'msg':     f'Upload saarthakay! ID: {file_id}',
+                    'url':     dl_url,
+                    'api_url': api_url,
+                    'file_id': file_id
+                })
             else:
-                socketio.emit('archive_status',
-                    {'msg': f'Upload failed: HTTP {resp.status_code}'})
+                err = result.get('message', result.get('value', 'Unknown error'))
+                socketio.emit('pd_status', {'msg': f'Failed: {err}', 'error': True})
+
         except Exception as e:
-            socketio.emit('archive_status', {'msg': f'Error: {e}'})
+            socketio.emit('pd_status', {'msg': f'Error: {e}', 'error': True})
 
     threading.Thread(target=do_upload, daemon=True).start()
     return jsonify({'status': 'started'})
 
 
+# -- Telegram Local Bot API Server -------------------------------------------
+# Uses telegram-bot-api binary running on localhost:8081
+# Supports files up to 2GB (vs 50MB on official API)
+# No MTProto session management -- just a bot token + chat_id
+#
+# One-time VPS setup:
+#   apt-get install telegram-bot-api
+#   nohup telegram-bot-api \
+#     --api-id=36668698 \
+#     --api-hash=5e1172b296563abf8ba9939c557c9f66 \
+#     --local --http-port=8081 --log=/root/sinhala-studio/tgapi.log &
+
+TG_API_ID   = os.environ.get('TG_API_ID',   '36668698')
+TG_API_HASH = os.environ.get('TG_API_HASH', '5e1172b296563abf8ba9939c557c9f66')
+TG_PORT     = int(os.environ.get('TG_PORT', '8081'))
+TG_LOG      = os.path.join(BASE_DIR, 'tgapi.log')
+
+
+def tg_local_url(token, method):
+    return f'http://localhost:{TG_PORT}/bot{token}/{method}'
+
+def tg_official_url(token, method):
+    return f'https://api.telegram.org/bot{token}/{method}'
+
+def tg_server_running(token):
+    try:
+        r = requests.get(tg_local_url(token, 'getMe'), timeout=4)
+        return r.status_code == 200 and r.json().get('ok', False)
+    except:
+        return False
+
+
+@app.route('/tg-server-status', methods=['POST'])
+def tg_server_status():
+    data  = request.get_json()
+    token = data.get('bot_token', '').strip()
+    if not token:
+        return jsonify({'running': False, 'msg': 'Bot token labadenna'})
+    running = tg_server_running(token)
+    if running:
+        try:
+            r  = requests.get(tg_local_url(token, 'getMe'), timeout=4)
+            me = r.json().get('result', {})
+            name = me.get('first_name','') + (' @'+me.get('username') if me.get('username') else '')
+            msg = f'Running - Bot: {name}'
+        except:
+            msg = f'Running on port {TG_PORT}'
+    else:
+        msg = f'Not running (port {TG_PORT})'
+    return jsonify({'running': running, 'msg': msg})
+
+
+@app.route('/tg-start-server', methods=['POST'])
+def tg_start_server():
+    data  = request.get_json()
+    token = data.get('bot_token', '').strip()
+
+    if tg_server_running(token):
+        return jsonify({'status': 'already_running', 'msg': 'Server already running'})
+
+    cmd = [
+        'telegram-bot-api',
+        f'--api-id={TG_API_ID}',
+        f'--api-hash={TG_API_HASH}',
+        '--local',
+        f'--http-port={TG_PORT}',
+        '--daemonize',
+        f'--log={TG_LOG}'
+    ]
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Wait up to 8s for server to start
+        for _ in range(8):
+            time.sleep(1)
+            if tg_server_running(token):
+                return jsonify({'status': 'started', 'msg': f'Server started on port {TG_PORT}'})
+        return jsonify({'status': 'timeout', 'msg': 'Start timeout -- tgapi.log check karanna'})
+    except FileNotFoundError:
+        return jsonify({
+            'status': 'not_installed',
+            'msg': 'telegram-bot-api not installed. Run: apt-get install telegram-bot-api'
+        }), 500
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)}), 500
+
+
+@app.route('/tg-stop-server', methods=['POST'])
+def tg_stop_server():
+    try:
+        subprocess.run(['pkill', '-f', 'telegram-bot-api'], capture_output=True)
+        time.sleep(1)
+        return jsonify({'status': 'stopped', 'msg': 'Server stopped'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
+
 
 @app.route('/upload-to-telegram', methods=['POST'])
 def upload_to_telegram():
-    """
-    Upload large video files to Telegram using a local Bot API server.
-
-    Why local Bot API server?
-    - Official Telegram Bot API: max 50 MB upload
-    - Local Bot API server: up to 2 GB (same as premium users)
-    - We send the file to http://localhost:8081 (local server) which
-      handles chunking and forwards to Telegram's datacenter.
-
-    Setup on VPS (one-time):
-      apt-get install telegram-bot-api
-      telegram-bot-api --api-id=YOUR_ID --api-hash=YOUR_HASH \
-                       --local --http-port=8081 &
-    Get API ID/Hash free at: https://my.telegram.org/apps
-    """
     data      = request.get_json()
     filename  = data.get('filename', '')
     bot_token = data.get('bot_token', '').strip()
     chat_id   = data.get('chat_id', '').strip()
-    caption   = data.get('caption', filename)
-    use_local = data.get('use_local', True)   # True = local server, False = official API
+    caption   = data.get('caption', filename).strip()
+    use_local = data.get('use_local', True)
     file_path = os.path.join(FINAL_FOLDER, filename)
 
     if not os.path.exists(file_path):
         return jsonify({'status': 'error', 'msg': 'File not found'}), 404
     if not bot_token or not chat_id:
-        return jsonify({'status': 'error', 'msg': 'Bot Token සහ Chat ID ලබාදෙන්න'}), 400
+        return jsonify({'status': 'error', 'msg': 'Bot token + Chat ID labadenna'}), 400
 
-    def do_tg_upload():
+    def do_upload():
         try:
-            file_size_mb = get_file_size_mb(file_path)
             file_size    = os.path.getsize(file_path)
+            file_size_mb = round(file_size / 1024 / 1024, 1)
 
-            # Choose API base
             if use_local:
-                api_base = 'http://localhost:8081/bot'
-            else:
-                api_base = 'https://api.telegram.org/bot'
-                if file_size_mb > 50:
+                if not tg_server_running(bot_token):
                     socketio.emit('tg_status', {
-                        'msg': f'⚠ File {file_size_mb}MB > 50MB limit. Local Bot API server අවශ්‍යයි.',
+                        'msg': 'Local server running nae -- Start Server click karanna',
                         'error': True
                     })
                     return
+                upload_url = tg_local_url(bot_token, 'sendVideo')
+                api_label  = f'Local API (port {TG_PORT})'
+            else:
+                if file_size_mb > 50:
+                    socketio.emit('tg_status', {
+                        'msg': f'{file_size_mb}MB > 50MB. Local server use karanna.',
+                        'error': True
+                    })
+                    return
+                upload_url = tg_official_url(bot_token, 'sendVideo')
+                api_label  = 'Official API'
 
             socketio.emit('tg_status', {
-                'msg': f'Telegram upload ආරම්භ · {file_size_mb} MB · {"local" if use_local else "official"} API...'
+                'msg': f'Uploading {file_size_mb} MB via {api_label}...',
+                'pct': 0
             })
 
-            # Progress-tracking file wrapper
-            class TGProgressFile:
+            # Progress-aware file wrapper
+            class ProgressFile:
                 def __init__(self, path, total):
-                    self._f = open(path, 'rb')
+                    self._f     = open(path, 'rb')
                     self._total = total
                     self._done  = 0
-                def read(self, sz=-1):
-                    chunk = self._f.read(sz)
+                    self._last_pct = 0
+                def read(self, size=-1):
+                    chunk = self._f.read(size)
                     if chunk:
                         self._done += len(chunk)
-                        pct  = round(self._done / self._total * 100, 1)
-                        done_mb  = round(self._done / 1024/1024, 1)
-                        total_mb = round(self._total / 1024/1024, 1)
-                        socketio.emit('tg_status', {
-                            'msg': f'Uploading {pct}% · {done_mb}/{total_mb} MB',
-                            'pct': pct
-                        })
+                        pct = round(self._done / self._total * 100, 1)
+                        # Emit every 1% to avoid flooding
+                        if pct - self._last_pct >= 1:
+                            self._last_pct = pct
+                            done_mb  = round(self._done / 1024/1024, 1)
+                            total_mb = round(self._total / 1024/1024, 1)
+                            socketio.emit('tg_status', {
+                                'msg': f'Uploading {pct}% - {done_mb}/{total_mb} MB',
+                                'pct': pct
+                            })
                     return chunk
-                def __len__(self): return self._total
-                def close(self): self._f.close()
+                def __len__(self):
+                    return self._total
+                def close(self):
+                    self._f.close()
 
-            pf = TGProgressFile(file_path, file_size)
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            session = requests.Session()
+            session.mount('http://',  HTTPAdapter(max_retries=Retry(total=2, backoff_factor=1)))
+            session.mount('https://', HTTPAdapter(max_retries=Retry(total=2, backoff_factor=1)))
+
+            pf = ProgressFile(file_path, file_size)
             try:
-                url = f'{api_base}{bot_token}/sendVideo'
-                resp = requests.post(
-                    url,
+                resp = session.post(
+                    upload_url,
                     data={
                         'chat_id':            chat_id,
-                        'caption':            caption[:1024],   # Telegram caption limit
+                        'caption':            caption[:1024],
                         'supports_streaming': 'true',
                         'parse_mode':         'HTML',
                     },
                     files={'video': (filename, pf, 'video/mp4')},
-                    timeout=7200   # 2 hour timeout for large files
+                    timeout=7200   # 2 hours for very large files
                 )
             finally:
                 pf.close()
 
             result = resp.json()
             if result.get('ok'):
-                msg_id   = result['result'].get('message_id', '')
-                tg_url   = f'https://t.me/c/{str(chat_id).lstrip("-100")}/{msg_id}' if str(chat_id).startswith('-100') else ''
+                msg_id = result['result'].get('message_id', '')
+                cid    = str(chat_id)
+                tg_url = ''
+                if cid.startswith('-100'):
+                    tg_url = f'https://t.me/c/{cid[4:]}/{msg_id}'
                 socketio.emit('tg_done', {
-                    'msg':      f'✓ Upload සාර්ථකයි! Message ID: {msg_id}',
-                    'url':      tg_url,
-                    'msg_id':   msg_id
+                    'msg':    f'Upload saarthakay! ID: {msg_id}',
+                    'url':    tg_url,
+                    'msg_id': str(msg_id)
                 })
             else:
                 err = result.get('description', 'Unknown error')
-                socketio.emit('tg_status', {
-                    'msg': f'Upload failed: {err}',
-                    'error': True
-                })
+                socketio.emit('tg_status', {'msg': f'Failed: {err}', 'error': True})
 
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
             socketio.emit('tg_status', {
-                'msg': 'Local Bot API server එකට connect වෙන්න බැහැ (localhost:8081). Server running ද?',
+                'msg': f'Connection failed -- server running da? (localhost:{TG_PORT})',
                 'error': True
             })
         except Exception as e:
             socketio.emit('tg_status', {'msg': f'Error: {e}', 'error': True})
 
-    threading.Thread(target=do_tg_upload, daemon=True).start()
+    threading.Thread(target=do_upload, daemon=True).start()
     return jsonify({'status': 'started'})
+
 
 # ── Single job processor ──────────────────────────────────────────────────────
 def process_one(job_num, total_jobs, video_url, srt_filename, preset=None, crf=None):
