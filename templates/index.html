@@ -627,7 +627,8 @@
                 actions = `<input type="checkbox" class="dl-check" value="${f.name}" onchange="updateZipBtn()" style="accent-color:var(--accent);width:13px;height:13px;cursor:pointer;flex-shrink:0">
                            <button class="btn-sm btn-prev" onclick="openPreview('${f.name}')">▶</button>
                            <a href="/download/${f.name}" target="_blank" class="btn-sm btn-view">↓</a>
-                           <button class="btn-sm btn-arch" onclick="openArch('${f.name}')">☁</button>`+actions;
+                           <button class="btn-sm btn-tg"   onclick="openTg('${f.name}')">✈ TG</button>
+                           <button class="btn-sm btn-pd"   onclick="openPd('${f.name}')">☁ PD</button>`+actions;
             }
             return `<div class="file-item">
                 <div class="file-meta">
