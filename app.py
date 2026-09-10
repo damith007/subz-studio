@@ -1,4 +1,10 @@
 import subprocess, re, os, uuid, time, threading, requests, chardet, psutil
+try:
+    import pymysql
+    MYSQL_OK = True
+except ImportError:
+    MYSQL_OK = False
+    print("[WARN] pymysql not installed -- pip install pymysql")
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template, request, send_from_directory, jsonify, Response
 from flask_socketio import SocketIO
@@ -477,6 +483,17 @@ def cleanup_tmp():
             removed += 1
     return {'status': 'ok', 'removed': removed}, 200
 
+@app.route('/db-files')
+def db_files():
+    """API: return all encoded files with upload details from MySQL."""
+    files = db_get_files(limit=100)
+    # Convert datetime to string for JSON
+    for f in files:
+        if f.get('created_at'):
+            f['created_at'] = str(f['created_at'])
+    return jsonify(files)
+
+
 @app.route('/download/<f>')
 def download_file(f): return send_from_directory(FINAL_FOLDER, f)
 
@@ -568,6 +585,8 @@ def upload_to_pixeldrain():
                 file_id  = result['id']
                 dl_url   = f'https://pixeldrain.com/u/{file_id}'
                 api_url  = f'https://pixeldrain.com/api/file/{file_id}'
+                # Save Pixeldrain upload to MySQL
+                db_update_pixeldrain(filename, file_id, dl_url)
                 socketio.emit('pd_done', {
                     'msg':     f'Upload saarthakay! ID: {file_id}',
                     'url':     dl_url,
@@ -601,6 +620,152 @@ TG_API_ID   = os.environ.get('TG_API_ID',   '36668698')
 TG_API_HASH = os.environ.get('TG_API_HASH', '5e1172b296563abf8ba9939c557c9f66')
 TG_PORT     = int(os.environ.get('TG_PORT', '8081'))
 TG_LOG      = os.path.join(BASE_DIR, 'tgapi.log')
+
+# -- MySQL Configuration ------------------------------------------------------
+DB_HOST   = os.environ.get('DB_HOST',   'localhost')
+DB_PORT   = int(os.environ.get('DB_PORT', '3306'))
+DB_USER   = os.environ.get('DB_USER',   'subz_user')
+DB_PASS   = os.environ.get('DB_PASS',   'your_password')
+DB_NAME   = os.environ.get('DB_NAME',   'subz_studio')
+
+
+def get_db():
+    """Get a new MySQL connection."""
+    if not MYSQL_OK:
+        return None
+    try:
+        return pymysql.connect(
+            host=DB_HOST, port=DB_PORT,
+            user=DB_USER, password=DB_PASS,
+            database=DB_NAME,
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True,
+            connect_timeout=5
+        )
+    except Exception as e:
+        print(f'[DB ERR] {e}')
+        return None
+
+
+def db_init():
+    """Create tables if they don't exist."""
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS encoded_files (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    filename      VARCHAR(512)  NOT NULL,
+                    original_url  TEXT,
+                    file_size_mb  FLOAT,
+                    resolution    VARCHAR(20),
+                    duration_sec  INT,
+                    preset        VARCHAR(20),
+                    crf           INT,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    -- Telegram
+                    tg_chat_id    VARCHAR(100),
+                    tg_message_id VARCHAR(100),
+                    tg_file_url   TEXT,
+                    -- Pixeldrain
+                    pd_file_id    VARCHAR(100),
+                    pd_url        TEXT,
+                    -- Download
+                    local_url     TEXT,
+                    INDEX idx_filename (filename(191)),
+                    INDEX idx_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+        print('[DB] Tables ready')
+    except Exception as e:
+        print(f'[DB INIT ERR] {e}')
+    finally:
+        conn.close()
+
+
+def db_insert_file(filename, original_url='', file_size_mb=0,
+                   resolution='', duration_sec=0, preset='', crf=0, local_url=''):
+    """Insert a new encoded file record. Returns inserted row id."""
+    conn = get_db()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO encoded_files
+                    (filename, original_url, file_size_mb, resolution,
+                     duration_sec, preset, crf, local_url)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (filename, original_url, file_size_mb, resolution,
+                    duration_sec, preset, crf, local_url))
+            return cur.lastrowid
+    except Exception as e:
+        print(f'[DB INSERT ERR] {e}')
+        return None
+    finally:
+        conn.close()
+
+
+def db_update_telegram(filename, chat_id, message_id, file_url=''):
+    """Update TG upload details for an existing file record."""
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encoded_files
+                SET tg_chat_id=%s, tg_message_id=%s, tg_file_url=%s
+                WHERE filename=%s
+                ORDER BY id DESC LIMIT 1
+            """, (str(chat_id), str(message_id), file_url, filename))
+    except Exception as e:
+        print(f'[DB TG UPDATE ERR] {e}')
+    finally:
+        conn.close()
+
+
+def db_update_pixeldrain(filename, pd_file_id, pd_url):
+    """Update Pixeldrain upload details for an existing file record."""
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encoded_files
+                SET pd_file_id=%s, pd_url=%s
+                WHERE filename=%s
+                ORDER BY id DESC LIMIT 1
+            """, (pd_file_id, pd_url, filename))
+    except Exception as e:
+        print(f'[DB PD UPDATE ERR] {e}')
+    finally:
+        conn.close()
+
+
+def db_get_files(limit=50):
+    """Fetch latest encoded files with all upload details."""
+    conn = get_db()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, filename, file_size_mb, resolution, duration_sec,
+                       created_at, tg_chat_id, tg_message_id, tg_file_url,
+                       pd_file_id, pd_url, local_url
+                FROM encoded_files
+                ORDER BY id DESC LIMIT %s
+            """, (limit,))
+            return cur.fetchall()
+    except Exception as e:
+        print(f'[DB FETCH ERR] {e}')
+        return []
+    finally:
+        conn.close()
+
+
+# Init DB tables on startup
+db_init()
 
 
 def tg_local_url(token, method):
@@ -781,6 +946,8 @@ def upload_to_telegram():
                 tg_url = ''
                 if cid.startswith('-100'):
                     tg_url = f'https://t.me/c/{cid[4:]}/{msg_id}'
+                # Save TG upload to MySQL
+                db_update_telegram(filename, chat_id, msg_id, tg_url)
                 socketio.emit('tg_done', {
                     'msg':    f'Upload saarthakay! ID: {msg_id}',
                     'url':    tg_url,
@@ -934,7 +1101,19 @@ def process_one(job_num, total_jobs, video_url, srt_filename, preset=None, crf=N
         rc = read_ffmpeg_progress(proc, duration_s, emit, 35, 65, 'Encoding')
 
         if rc == 0:
-            size_mb = get_file_size_mb(final_path)
+            size_mb   = get_file_size_mb(final_path)
+            local_url = f'{TG_HOST}/download/{final_name}'
+            # Save to MySQL
+            db_insert_file(
+                filename     = final_name,
+                original_url = video_url,
+                file_size_mb = size_mb,
+                resolution   = f'{video_w}x{video_h}',
+                duration_sec = round(duration_s),
+                preset       = _preset,
+                crf          = _crf,
+                local_url    = local_url
+            )
             socketio.emit('job_done', {
                 'job': job_num, 'total': total_jobs,
                 'filename': final_name, 'size': size_mb,
