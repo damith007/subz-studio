@@ -1,11 +1,7 @@
 version: '3.9'
-
 services:
-
   subz-studio:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     container_name: subz-studio
     restart: unless-stopped
     ports:
@@ -14,91 +10,62 @@ services:
       - ./uploads:/app/uploads
       - ./downloads:/app/downloads
       - ./fontcache:/app/fontcache
+      - ./logs:/app/logs
+    env_file: .env
     environment:
-      - TG_API_ID=36668698
-      - TG_API_HASH=5e1172b296563abf8ba9939c557c9f66
-      - TG_PORT=8081
-      - TG_HOST=https://studio.subz.lk
-      - TG_BOT_TOKEN=your_bot_token_here
-      # MySQL
       - DB_HOST=mysql
-      - DB_PORT=3306
-      - DB_USER=subz_user
-      - DB_PASS=subz_pass_change_me
-      - DB_NAME=subz_studio
-    networks:
-      - subz-net
+    networks: [subz-net]
     depends_on:
       mysql:
         condition: service_healthy
-      tg-server:
-        condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+      test: ["CMD","curl","-f","http://localhost:5000/health"]
+      interval: 30s; timeout: 10s; retries: 3; start_period: 20s
 
   mysql:
     image: mysql:8.0
     container_name: subz-mysql
     restart: unless-stopped
+    env_file: .env
     environment:
       - MYSQL_ROOT_PASSWORD=root_change_me
-      - MYSQL_DATABASE=subz_studio
-      - MYSQL_USER=subz_user
-      - MYSQL_PASSWORD=subz_pass_change_me
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD=${DB_PASS}
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./mysql-init:/docker-entrypoint-initdb.d   # optional: put .sql files here
-    ports:
-      - "3306:3306"    # remove this line to not expose MySQL externally
-    networks:
-      - subz-net
+    networks: [subz-net]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "subz_user", "-psubz_pass_change_me"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      test: ["CMD","mysqladmin","ping","-h","localhost"]
+      interval: 10s; timeout: 5s; retries: 5; start_period: 30s
 
   tg-server:
     image: aiogram/telegram-bot-api:latest
     container_name: subz-tg-api
     restart: unless-stopped
-    ports:
-      - "8081:8081"
-    volumes:
-      - ./tg-data:/var/lib/telegram-bot-api
+    ports: ["8081:8081"]
+    volumes: [./tg-data:/var/lib/telegram-bot-api]
     environment:
-      - TELEGRAM_API_ID=36668698
-      - TELEGRAM_API_HASH=5e1172b296563abf8ba9939c557c9f66
+      - TELEGRAM_API_ID=${TG_API_ID}
+      - TELEGRAM_API_HASH=${TG_API_HASH}
       - TELEGRAM_LOCAL=1
       - TELEGRAM_PORT=8081
-    networks:
-      - subz-net
+    networks: [subz-net]
 
   nginx:
     image: nginx:alpine
     container_name: subz-nginx
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
+    ports: ["80:80","443:443"]
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
-    networks:
-      - subz-net
-    depends_on:
-      - subz-studio
-    profiles:
-      - nginx
+    networks: [subz-net]
+    depends_on: [subz-studio]
+    profiles: [nginx]
 
 volumes:
   mysql_data:
-
 networks:
   subz-net:
     driver: bridge
