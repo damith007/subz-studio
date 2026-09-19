@@ -1,0 +1,565 @@
+================================================================================
+  SUBZ STUDIO PRO — FULL VPS INSTALL GUIDE
+  Production-Ready Setup for Ubuntu 22.04 / 24.04 LTS
+  studio.subz.lk
+================================================================================
+
+WHAT THIS INSTALLS
+------------------
+  - Flask/Socket.IO subtitle-burning pipeline (port 5000)
+  - Gunicorn + Gevent (production WSGI server)
+  - Nginx reverse proxy with SSL (Let's Encrypt)
+  - Telegram Local Bot API Server (port 8081, up to 2GB uploads)
+  - FFmpeg with libass (Sinhala subtitle burn-in)
+  - MySQL 8.0 (encode/upload history)
+  - Systemd services (auto-start on reboot)
+  - Fail2ban (brute force protection)
+  - UFW firewall
+
+REQUIREMENTS
+------------
+  - Fresh Ubuntu 22.04 or 24.04 VPS (min 2 CPU, 4GB RAM, 50GB disk)
+  - Root or sudo access
+  - Domain pointing to your VPS IP (e.g. studio.subz.lk → A record)
+  - Telegram Bot Token (from @BotFather)
+  - Telegram API ID + Hash (from https://my.telegram.org/apps)
+
+================================================================================
+  STEP 1 — INITIAL SERVER SETUP
+================================================================================
+
+# Login as root
+ssh root@YOUR_VPS_IP
+
+# Update system
+apt-get update && apt-get upgrade -y
+
+# Set timezone
+timedatectl set-timezone Asia/Colombo
+
+# Create app user (don't run as root in production)
+adduser subz --disabled-password --gecos ""
+usermod -aG sudo subz
+
+# Switch to app user
+su - subz
+
+================================================================================
+  STEP 2 — INSTALL SYSTEM DEPENDENCIES
+================================================================================
+
+sudo apt-get install -y \
+    git curl wget unzip \
+    python3 python3-pip python3-venv \
+    nginx \
+    ffmpeg \
+    fontconfig \
+    mysql-server \
+    certbot python3-certbot-nginx \
+    fail2ban \
+    ufw \
+    build-essential cmake \
+    libssl-dev zlib1g-dev gperf
+
+# Verify FFmpeg has libass
+ffmpeg -filters 2>&1 | grep "ass"
+# Should show: VS ass  Burn subtitles into video, using libass renderer
+
+================================================================================
+  STEP 3 — INSTALL TELEGRAM BOT API SERVER
+================================================================================
+
+# Method A: Pre-built binary (fast, recommended)
+cd /tmp
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    wget -O tgbotapi.zip "https://github.com/tdlib/telegram-bot-api/releases/download/v7.9/telegram-bot-api-amd64-linux.zip"
+elif [ "$ARCH" = "aarch64" ]; then
+    wget -O tgbotapi.zip "https://github.com/tdlib/telegram-bot-api/releases/download/v7.9/telegram-bot-api-aarch64-linux.zip"
+fi
+unzip -o tgbotapi.zip
+chmod +x telegram-bot-api
+sudo mv telegram-bot-api /usr/local/bin/
+
+# Verify
+telegram-bot-api --version
+
+# --- OR Method B: Build from source (if binary doesn't work) ---
+# cd /tmp
+# git clone --recursive https://github.com/tdlib/telegram-bot-api.git
+# cd telegram-bot-api && mkdir build && cd build
+# cmake -DCMAKE_BUILD_TYPE=Release ..
+# cmake --build . --target telegram-bot-api -j$(nproc)
+# sudo cp telegram-bot-api /usr/local/bin/
+
+================================================================================
+  STEP 4 — CLONE PROJECT
+================================================================================
+
+cd /home/subz
+git clone https://github.com/damith007/subz-studio.git
+cd subz-studio
+
+# Create required directories
+mkdir -p uploads downloads fonts fontcache logs
+
+# Python virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install Python dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Deactivate for now
+deactivate
+
+================================================================================
+  STEP 5 — MYSQL SETUP
+================================================================================
+
+# Secure MySQL installation
+sudo mysql_secure_installation
+# (Set root password, remove anonymous users, disallow remote root, remove test db)
+
+# Create database and user
+sudo mysql -u root -p << 'SQL'
+CREATE DATABASE IF NOT EXISTS subz_studio CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'subz_user'@'localhost' IDENTIFIED BY 'CHANGE_THIS_PASSWORD';
+GRANT ALL PRIVILEGES ON subz_studio.* TO 'subz_user'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+
+# Test connection
+mysql -u subz_user -p'CHANGE_THIS_PASSWORD' subz_studio -e "SHOW TABLES;"
+# (Empty is fine — tables are created automatically on first app start)
+
+================================================================================
+  STEP 6 — ENVIRONMENT CONFIG
+================================================================================
+
+# Create .env file
+cat > /home/subz/subz-studio/.env << 'ENV'
+# Flask
+SECRET_KEY=CHANGE_THIS_TO_A_RANDOM_64_CHAR_STRING
+
+# MySQL
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=subz_user
+DB_PASS=CHANGE_THIS_PASSWORD
+DB_NAME=subz_studio
+
+# Telegram
+TG_API_ID=36668698
+TG_API_HASH=5e1172b296563abf8ba9939c557c9f66
+TG_PORT=8081
+TG_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+TG_HOST=https://studio.subz.lk
+
+# Encoding (auto-detect CPU threads, these are overrides)
+# PRESET=superfast
+# CRF=18
+ENV
+
+# Protect env file
+chmod 600 /home/subz/subz-studio/.env
+
+# Load env vars in the app via python-dotenv (already in requirements.txt)
+# OR export them manually:
+# set -a && source /home/subz/subz-studio/.env && set +a
+
+================================================================================
+  STEP 7 — SYSTEMD SERVICES
+================================================================================
+
+---- 7A. Subz Studio App Service ----
+
+sudo tee /etc/systemd/system/subz-studio.service << 'SERVICE'
+[Unit]
+Description=Subz Studio Pro — Subtitle Burning Pipeline
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=subz
+Group=subz
+WorkingDirectory=/home/subz/subz-studio
+EnvironmentFile=/home/subz/subz-studio/.env
+ExecStart=/home/subz/subz-studio/venv/bin/gunicorn \
+    --worker-class gevent \
+    --workers 1 \
+    --timeout 1800 \
+    --bind 127.0.0.1:5000 \
+    --log-level info \
+    --access-logfile /home/subz/subz-studio/logs/access.log \
+    --error-logfile  /home/subz/subz-studio/logs/error.log \
+    app:app
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+---- 7B. Telegram Bot API Server Service ----
+
+sudo tee /etc/systemd/system/tg-bot-api.service << 'SERVICE'
+[Unit]
+Description=Telegram Local Bot API Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=subz
+Group=subz
+ExecStart=/usr/local/bin/telegram-bot-api \
+    --api-id=36668698 \
+    --api-hash=5e1172b296563abf8ba9939c557c9f66 \
+    --local \
+    --http-port=8081 \
+    --log=/home/subz/subz-studio/logs/tgapi.log \
+    --verbosity=1
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+---- Enable and start services ----
+
+sudo systemctl daemon-reload
+sudo systemctl enable subz-studio tg-bot-api
+sudo systemctl start tg-bot-api
+sleep 3
+sudo systemctl start subz-studio
+
+# Check status
+sudo systemctl status subz-studio
+sudo systemctl status tg-bot-api
+
+================================================================================
+  STEP 8 — NGINX CONFIGURATION
+================================================================================
+
+sudo tee /etc/nginx/sites-available/studio.subz.lk << 'NGINX'
+upstream subz_app {
+    server 127.0.0.1:5000;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name studio.subz.lk;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name studio.subz.lk;
+
+    # SSL (filled by Certbot below)
+    ssl_certificate     /etc/letsencrypt/live/studio.subz.lk/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/studio.subz.lk/privkey.pem;
+    include             /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN"          always;
+    add_header X-Content-Type-Options "nosniff"      always;
+    add_header X-XSS-Protection "1; mode=block"      always;
+    add_header Referrer-Policy "strict-origin"        always;
+
+    # Large file uploads (2GB for Telegram)
+    client_max_body_size 0;
+    proxy_read_timeout   3600s;
+    proxy_send_timeout   3600s;
+    proxy_connect_timeout 60s;
+
+    # Gzip
+    gzip on;
+    gzip_types text/plain application/json text/css application/javascript;
+
+    # Main app
+    location / {
+        proxy_pass         http://subz_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+
+        # Socket.IO WebSocket support
+        proxy_set_header   Upgrade    $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_buffering    off;
+        proxy_cache        off;
+    }
+
+    # Direct download — serve from disk, bypass app
+    location /download/ {
+        alias /home/subz/subz-studio/downloads/;
+        add_header Content-Disposition "attachment";
+        sendfile on;
+        tcp_nopush on;
+        aio on;
+    }
+
+    # Logs
+    access_log /var/log/nginx/studio.subz.lk.access.log;
+    error_log  /var/log/nginx/studio.subz.lk.error.log;
+}
+NGINX
+
+# Enable site
+sudo ln -sf /etc/nginx/sites-available/studio.subz.lk /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+================================================================================
+  STEP 9 — SSL CERTIFICATE (Let's Encrypt)
+================================================================================
+
+# Make sure your domain DNS A record points to this VPS IP first!
+sudo certbot --nginx -d studio.subz.lk --email your@email.com --agree-tos --no-eff-email
+
+# Auto-renewal (already set up by certbot, verify with):
+sudo systemctl status certbot.timer
+
+================================================================================
+  STEP 10 — FIREWALL (UFW)
+================================================================================
+
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow ssh
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+# Do NOT open 5000 or 8081 publicly — Nginx proxies 5000, 8081 is internal only
+sudo ufw enable
+sudo ufw status
+
+================================================================================
+  STEP 11 — FAIL2BAN (Brute Force Protection)
+================================================================================
+
+sudo tee /etc/fail2ban/jail.local << 'F2B'
+[DEFAULT]
+bantime  = 3600
+findtime = 600
+maxretry = 5
+
+[sshd]
+enabled = true
+port    = ssh
+logpath = /var/log/auth.log
+
+[nginx-http-auth]
+enabled = true
+
+[nginx-limit-req]
+enabled = true
+port    = http,https
+logpath = /var/log/nginx/*.error.log
+F2B
+
+sudo systemctl restart fail2ban
+sudo fail2ban-client status
+
+================================================================================
+  STEP 12 — TELEGRAM WEBHOOK SETUP
+================================================================================
+
+# Register webhook so Telegram sends videos to your app
+# (Replace YOUR_BOT_TOKEN with actual token)
+
+curl -X POST "http://localhost:8081/botYOUR_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://studio.subz.lk/tg-webhook",
+    "drop_pending_updates": true,
+    "allowed_updates": ["message", "channel_post"]
+  }'
+
+# Expected response:
+# {"ok":true,"result":true,"description":"Webhook was set"}
+
+# OR use the UI: open https://studio.subz.lk → TG button → Webhook Setup section
+
+================================================================================
+  STEP 13 — VERIFY EVERYTHING
+================================================================================
+
+# 1. App running
+sudo systemctl status subz-studio
+curl -s http://127.0.0.1:5000/ | head -5
+
+# 2. Telegram bot API running
+sudo systemctl status tg-bot-api
+curl "http://localhost:8081/botYOUR_BOT_TOKEN/getMe"
+
+# 3. Nginx proxy working
+curl -I https://studio.subz.lk/
+
+# 4. MySQL connected (check app logs)
+sudo journalctl -u subz-studio -n 30
+# Should see: [DB] Tables ready
+
+# 5. FFmpeg + libass
+ffmpeg -filters 2>&1 | grep ass
+
+# 6. Font loaded
+fc-list | grep -i nirmala
+
+================================================================================
+  USEFUL COMMANDS
+================================================================================
+
+# View live app logs
+sudo journalctl -u subz-studio -f
+
+# View Telegram API logs
+tail -f /home/subz/subz-studio/logs/tgapi.log
+
+# Restart app (after code update)
+cd /home/subz/subz-studio
+git pull
+sudo systemctl restart subz-studio
+
+# Update code and restart
+cd /home/subz/subz-studio && git pull && sudo systemctl restart subz-studio
+
+# Check disk usage
+df -h /home/subz/subz-studio/downloads
+
+# MySQL — view encoded files
+mysql -u subz_user -p'CHANGE_THIS_PASSWORD' subz_studio -e "SELECT id, filename, file_size_mb, resolution, tg_message_id, pd_url, created_at FROM encoded_files ORDER BY id DESC LIMIT 20;"
+
+# Encoded files API
+curl https://studio.subz.lk/db-files | python3 -m json.tool
+
+# Clear temp uploads
+curl -X POST https://studio.subz.lk/cleanup-tmp
+
+================================================================================
+  DOCKER ALTERNATIVE (Simpler Setup)
+================================================================================
+
+# If you prefer Docker instead of manual setup:
+
+cd /home/subz/subz-studio
+
+# Edit docker-compose.yml — update passwords and tokens
+nano docker-compose.yml
+
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f subz-studio
+
+# Update
+git pull && docker compose up -d --build
+
+================================================================================
+  FILE STRUCTURE
+================================================================================
+
+/home/subz/subz-studio/
+├── app.py                    # Main Flask application
+├── templates/
+│   └── index.html            # Frontend UI
+├── requirements.txt
+├── .env                      # Environment variables (keep secret!)
+├── NirmalaB.ttf              # Sinhala font (auto-downloaded)
+├── fonts/                    # fontconfig font directory
+├── fontcache/                # fontconfig cache
+├── uploads/                  # Temp processing files (auto-cleaned)
+├── downloads/                # Encoded output videos
+├── logs/
+│   ├── access.log            # Gunicorn access log
+│   ├── error.log             # Gunicorn error log
+│   └── tgapi.log             # Telegram Bot API log
+├── Dockerfile
+├── docker-compose.yml
+├── nginx.conf
+├── start.sh
+└── INSTALL.txt               # This file
+
+================================================================================
+  TROUBLESHOOTING
+================================================================================
+
+PROBLEM: "libass not found" or subtitles not burning
+FIX:
+  ffmpeg -filters 2>&1 | grep ass
+  # If empty: apt-get install --reinstall ffmpeg
+  # Or build FFmpeg from source with --enable-libass
+
+PROBLEM: Sinhala font not rendering (boxes/squares)
+FIX:
+  fc-list | grep -i nirmala
+  # If empty: font didn't copy. Check /home/subz/subz-studio/fonts/
+  fc-cache -fv /home/subz/subz-studio/fonts/
+  # Restart app: sudo systemctl restart subz-studio
+
+PROBLEM: Telegram upload fails "Connection refused"
+FIX:
+  sudo systemctl status tg-bot-api
+  sudo systemctl restart tg-bot-api
+  curl http://localhost:8081/botTOKEN/getMe
+  # If "not installed": run install-telegram-bot-api.sh
+
+PROBLEM: MySQL connection failed
+FIX:
+  mysql -u subz_user -p subz_studio
+  # Check .env DB_PASS matches MySQL user password
+  # Check: sudo systemctl status mysql
+
+PROBLEM: Socket.IO not connecting (progress bar not updating)
+FIX:
+  # Nginx must pass Upgrade header — check nginx config has:
+  # proxy_set_header Upgrade $http_upgrade;
+  # proxy_set_header Connection "upgrade";
+  sudo nginx -t && sudo systemctl reload nginx
+
+PROBLEM: Large videos fail (timeout)
+FIX:
+  # Increase gunicorn timeout in systemd service:
+  # --timeout 3600
+  # Nginx: proxy_read_timeout 3600s;
+  sudo systemctl daemon-reload && sudo systemctl restart subz-studio
+
+================================================================================
+  SECURITY CHECKLIST
+================================================================================
+
+[ ] Changed DB_PASS from default
+[ ] Changed SECRET_KEY to random 64-char string
+[ ] .env file has chmod 600
+[ ] UFW enabled, only ports 22/80/443 open
+[ ] Fail2ban running
+[ ] SSL certificate installed
+[ ] Port 5000 NOT exposed publicly (only via Nginx)
+[ ] Port 8081 NOT exposed publicly (only internal)
+[ ] Git repo has .gitignore covering .env, NirmalaB.ttf, uploads/, downloads/
+[ ] MySQL remote root login disabled
+[ ] Telegram API hash kept out of version control
+
+================================================================================
+  SUPPORT
+================================================================================
+
+  GitHub:  https://github.com/damith007/subz-studio
+  Site:    https://studio.subz.lk
+  Stack:   Flask · FFmpeg · libass · MySQL · Nginx · Gunicorn · Gevent
+
+================================================================================
