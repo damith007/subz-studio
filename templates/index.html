@@ -377,7 +377,26 @@
         <div id="tg-status" style="font-family:var(--mono);font-size:11px;color:#29b6f6;margin-top:8px;min-height:16px;line-height:1.6"></div>
         <div id="tg-link"   style="font-family:var(--mono);font-size:11px;color:var(--green);margin-top:4px;word-break:break-all"></div>
 
-        <details style="margin-top:13px">
+        <!-- Webhook setup -->
+        <details style="margin-top:10px">
+            <summary style="font-family:var(--mono);font-size:10px;color:#f59e0b;cursor:pointer">&#x25B8; Webhook Setup (Auto-encode from Telegram)</summary>
+            <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">
+                <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7;background:var(--surface3);padding:9px 11px;border-radius:7px">
+                    Send video to bot &#x2192; auto encode &#x2192; bot replies with download URL
+                </div>
+                <input type="text" id="wh-token" placeholder="Bot Token" autocomplete="off"
+                    style="background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:8px 11px;border-radius:7px;font-family:var(--mono);font-size:11px;outline:none;width:100%">
+                <input type="text" id="wh-host" placeholder="Your public URL (e.g. https://studio.subz.lk)"
+                    style="background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:8px 11px;border-radius:7px;font-family:var(--mono);font-size:11px;outline:none;width:100%">
+                <button onclick="setWebhook()"
+                    style="font-family:var(--mono);font-size:11px;padding:8px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);border-radius:7px;cursor:pointer">
+                    &#x2713; Register Webhook
+                </button>
+                <div id="wh-status" style="font-family:var(--mono);font-size:10px;color:var(--muted);min-height:14px"></div>
+            </div>
+        </details>
+
+        <details style="margin-top:10px">
             <summary style="font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer">&#x25B8; VPS setup guide</summary>
             <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.9;margin-top:7px;background:var(--surface3);padding:10px 12px;border-radius:7px">
                 <b style="color:var(--text)">1. Install:</b><br>
@@ -913,6 +932,26 @@
             '</div>';
         showToast('Pixeldrain upload saarthakay! ' + d.url);
     });
+
+    // Telegram webhook setup
+    function setWebhook() {
+        const token = document.getElementById('wh-token').value.trim() ||
+                      document.getElementById('tg-token').value.trim();
+        const host  = document.getElementById('wh-host').value.trim();
+        if (!token || !host) {
+            document.getElementById('wh-status').innerText = 'Token and host required!';
+            return;
+        }
+        document.getElementById('wh-status').innerText = 'Setting webhook...';
+        fetch('/tg-set-webhook', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({bot_token: token, host, use_local: tgLocalMode})
+        }).then(r=>r.json()).then(d => {
+            document.getElementById('wh-status').innerText = d.msg;
+            document.getElementById('wh-status').style.color =
+                d.status === 'ok' ? 'var(--green)' : 'var(--red)';
+        });
+    }
 
     refreshLists();
     setInterval(refreshLists,10000);
