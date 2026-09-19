@@ -1,17 +1,51 @@
 import subprocess, re, os, uuid, time, threading, requests, chardet, psutil
+import logging
+from logging.handlers import RotatingFileHandler
+
+# Load .env file if present (python-dotenv)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 try:
     import pymysql
     MYSQL_OK = True
 except ImportError:
     MYSQL_OK = False
-    print("[WARN] pymysql not installed -- pip install pymysql")
+
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template, request, send_from_directory, jsonify, Response
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'subz_studio_v9'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(32).hex())
+
+# ── Logging setup ─────────────────────────────────────────────────────────────
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+log = logging.getLogger('subz-studio')
+
+file_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, 'app.log'),
+    maxBytes=10*1024*1024,   # 10MB
+    backupCount=5
+)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+log.addHandler(file_handler)
+
+if not MYSQL_OK:
+    log.warning('pymysql not installed -- pip install pymysql')
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent',
+                    logger=False, engineio_logger=False)
 
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
@@ -27,15 +61,15 @@ os.makedirs(FINAL_FOLDER,  exist_ok=True)
 
 # ── Download Nirmala Bold font if missing ─────────────────────────────────────
 if not os.path.exists(FONT_PATH):
-    print('[INFO] Downloading NirmalaB.ttf...')
+    log.info('Downloading NirmalaB.ttf...')
     try:
         r = requests.get(FONT_URL, timeout=30)
         r.raise_for_status()
         with open(FONT_PATH, 'wb') as f:
             f.write(r.content)
-        print(f'[INFO] Font saved → {FONT_PATH}')
+        log.info(f'Font saved: {FONT_PATH}')
     except Exception as e:
-        print(f'[WARN] Font download failed: {e}')
+        log.warning(f'Font download failed: {e}')
 
 # ── fontconfig — register NirmalaB.ttf so libass finds it ────────────────────
 FC_DIR = os.path.join(BASE_DIR, 'fonts')
@@ -68,7 +102,7 @@ os.environ['FONTCONFIG_PATH'] = FC_DIR
 # Pre-build fontconfig cache at startup so first job is fast
 subprocess.run(['fc-cache', '-f', FC_DIR],
                capture_output=True, env=os.environ.copy())
-print(f'[INFO] fontconfig cache built. Font: {FC_FONT}')
+log.info(f'fontconfig ready: {FC_FONT}')
 
 
 # ── Resource monitor ──────────────────────────────────────────────────────────
@@ -483,6 +517,29 @@ def cleanup_tmp():
             removed += 1
     return {'status': 'ok', 'removed': removed}, 200
 
+@app.route('/health')
+def health():
+    """Health check endpoint for uptime monitors (UptimeRobot, etc.)"""
+    checks = {'app': 'ok', 'mysql': 'unknown', 'ffmpeg': 'unknown'}
+    # MySQL check
+    conn = get_db()
+    if conn:
+        try:
+            with conn.cursor() as c: c.execute('SELECT 1')
+            checks['mysql'] = 'ok'
+        except: checks['mysql'] = 'error'
+        finally: conn.close()
+    else:
+        checks['mysql'] = 'unavailable'
+    # FFmpeg check
+    try:
+        r = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+        checks['ffmpeg'] = 'ok' if r.returncode == 0 else 'error'
+    except: checks['ffmpeg'] = 'not_found'
+    status_code = 200 if all(v in ('ok','unavailable') for v in checks.values()) else 503
+    return jsonify({'status': 'ok' if status_code==200 else 'degraded', **checks}), status_code
+
+
 @app.route('/db-files')
 def db_files():
     """API: return all encoded files with upload details from MySQL."""
@@ -604,6 +661,107 @@ def upload_to_pixeldrain():
     return jsonify({'status': 'started'})
 
 
+@app.route('/upload-to-archive', methods=['POST'])
+def upload_to_archive():
+    """
+    Upload to Archive.org via S3-like API.
+    Requires S3 Access Key + Secret Key from https://archive.org/account/s3.php
+    Free, permanent storage, public URL, no size limit.
+    """
+    data       = request.get_json()
+    filename   = data.get('filename', '')
+    ia_user    = data.get('ia_user', '').strip()    # S3 Access Key
+    ia_pass    = data.get('ia_pass', '').strip()    # S3 Secret Key
+    title      = data.get('title', filename).strip()
+    file_path  = os.path.join(FINAL_FOLDER, filename)
+
+    if not os.path.exists(file_path):
+        return jsonify({'status': 'error', 'msg': 'File not found'}), 404
+    if not ia_user or not ia_pass:
+        return jsonify({'status': 'error', 'msg': 'S3 Access Key + Secret Key labadenna'}), 400
+
+    def do_upload():
+        try:
+            file_size    = os.path.getsize(file_path)
+            file_size_mb = round(file_size / 1024 / 1024, 1)
+            identifier   = 'subz-' + uuid.uuid4().hex   # unique, no collision
+
+            socketio.emit('ia_status', {
+                'msg': f'Archive.org upload starting... {file_size_mb} MB',
+                'pct': 0
+            })
+
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            session = requests.Session()
+            session.mount('https://', HTTPAdapter(
+                max_retries=Retry(total=3, backoff_factor=2,
+                                  status_forcelist=[500,502,503,504])))
+
+            headers = {
+                'x-archive-meta-title':       title,
+                'x-archive-meta-mediatype':   'movies',
+                'x-archive-meta-subject':     'sinhala subtitles;subz.lk',
+                'x-archive-auto-make-bucket': '1',
+                'Content-Type':               'video/mp4',
+                'Content-Length':             str(file_size),
+                'Authorization':              f'LOW {ia_user}:{ia_pass}',
+            }
+
+            class ProgressFile:
+                def __init__(self, path, total):
+                    self._f = open(path, 'rb')
+                    self._t = total
+                    self._d = 0
+                    self._last = 0
+                def read(self, sz=-1):
+                    chunk = self._f.read(sz)
+                    if chunk:
+                        self._d += len(chunk)
+                        pct = round(self._d / self._t * 100, 1)
+                        if pct - self._last >= 1:
+                            self._last = pct
+                            socketio.emit('ia_status', {
+                                'msg': f'Uploading {pct}% - {round(self._d/1024/1024,1)}/{round(self._t/1024/1024,1)} MB',
+                                'pct': pct
+                            })
+                    return chunk
+                def __len__(self): return self._t
+                def close(self): self._f.close()
+
+            pf = ProgressFile(file_path, file_size)
+            try:
+                resp = session.put(
+                    f'https://s3.us.archive.org/{identifier}/{filename}',
+                    data=pf, headers=headers, timeout=7200
+                )
+            finally:
+                pf.close()
+
+            if resp.status_code in (200, 201):
+                ia_url = f'https://archive.org/details/{identifier}'
+                dl_url = f'https://archive.org/download/{identifier}/{filename}'
+                # Save to MySQL
+                db_update_archive(filename, identifier, ia_url)
+                socketio.emit('ia_done', {
+                    'msg':        f'Upload saarthakay! ID: {identifier}',
+                    'url':        ia_url,
+                    'dl_url':     dl_url,
+                    'identifier': identifier
+                })
+            else:
+                socketio.emit('ia_status', {
+                    'msg': f'Failed: HTTP {resp.status_code} - {resp.text[:200]}',
+                    'error': True
+                })
+
+        except Exception as e:
+            socketio.emit('ia_status', {'msg': f'Error: {e}', 'error': True})
+
+    threading.Thread(target=do_upload, daemon=True).start()
+    return jsonify({'status': 'started'})
+
+
 # -- Telegram Local Bot API Server -------------------------------------------
 # Uses telegram-bot-api binary running on localhost:8081
 # Supports files up to 2GB (vs 50MB on official API)
@@ -644,7 +802,7 @@ def get_db():
             connect_timeout=5
         )
     except Exception as e:
-        print(f'[DB ERR] {e}')
+        log.error(f'MySQL connection error: {e}')
         return None
 
 
@@ -672,15 +830,18 @@ def db_init():
                     -- Pixeldrain
                     pd_file_id    VARCHAR(100),
                     pd_url        TEXT,
+                    -- Archive.org
+                    ia_identifier VARCHAR(200),
+                    ia_url        TEXT,
                     -- Download
                     local_url     TEXT,
                     INDEX idx_filename (filename(191)),
                     INDEX idx_created (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
-        print('[DB] Tables ready')
+        log.info('MySQL tables ready')
     except Exception as e:
-        print(f'[DB INIT ERR] {e}')
+        log.error(f'MySQL init error: {e}')
     finally:
         conn.close()
 
@@ -701,7 +862,7 @@ def db_insert_file(filename, original_url='', file_size_mb=0,
                     duration_sec, preset, crf, local_url))
             return cur.lastrowid
     except Exception as e:
-        print(f'[DB INSERT ERR] {e}')
+        log.error(f'MySQL insert error: {e}')
         return None
     finally:
         conn.close()
@@ -720,7 +881,7 @@ def db_update_telegram(filename, chat_id, message_id, file_url=''):
                 ORDER BY id DESC LIMIT 1
             """, (str(chat_id), str(message_id), file_url, filename))
     except Exception as e:
-        print(f'[DB TG UPDATE ERR] {e}')
+        log.error(f'MySQL TG update error: {e}')
     finally:
         conn.close()
 
@@ -738,10 +899,27 @@ def db_update_pixeldrain(filename, pd_file_id, pd_url):
                 ORDER BY id DESC LIMIT 1
             """, (pd_file_id, pd_url, filename))
     except Exception as e:
-        print(f'[DB PD UPDATE ERR] {e}')
+        log.error(f'MySQL PD update error: {e}')
     finally:
         conn.close()
 
+
+def db_update_archive(filename, identifier, ia_url):
+    """Update Archive.org upload details for an existing file record."""
+    conn = get_db()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE encoded_files
+                SET ia_identifier=%s, ia_url=%s
+                WHERE filename=%s
+                ORDER BY id DESC LIMIT 1
+            """, (identifier, ia_url, filename))
+    except Exception as e:
+        print(f'[DB IA UPDATE ERR] {e}')
+    finally:
+        conn.close()
 
 def db_get_files(limit=50):
     """Fetch latest encoded files with all upload details."""
@@ -758,7 +936,7 @@ def db_get_files(limit=50):
             """, (limit,))
             return cur.fetchall()
     except Exception as e:
-        print(f'[DB FETCH ERR] {e}')
+        log.error(f'MySQL fetch error: {e}')
         return []
     finally:
         conn.close()
@@ -1126,7 +1304,7 @@ def process_one(job_num, total_jobs, video_url, srt_filename, preset=None, crf=N
             socketio.emit('status', {'msg': prefix + 'FFmpeg error!'}); return False
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        import traceback; log.error(traceback.format_exc())
         socketio.emit('status', {'msg': prefix + f'Error: {e}'}); return False
 
     finally:
